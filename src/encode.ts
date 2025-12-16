@@ -9,6 +9,7 @@ import { Data, type Exact, type TSchema } from '@lucid-evolution/lucid';
  * @returns The encoded data as a hex string
  * @throws error when the `data` doesn't match the `schema`
  */
+/** @internal */
 export function encodeData<T extends TSchema>(
   data: Exact<Data.Static<T>>,
   schema?: T,

@@ -6,6 +6,7 @@ import { RedeemerBuilder, UTxO } from "@lucid-evolution/lucid";
  * @param length The desired length of the output byte array.
  * @returns A Uint8Array representing the BigInt, padded with leading zeros if necessary.
  */
+/** @internal */
 export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
   // if n is negative, n only can be deltaAmount
   // add 2^256 (32 bytes) to get positive number represent deltaAmount
@@ -29,6 +30,7 @@ export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
   return u8;
 }
 
+/** @internal */
 export const swapTokensRedeemer = (poolInUtxos: UTxO[], deltaAmounts: bigint[]) => {
   try {
     // currently, only support one pool in -> one pool out

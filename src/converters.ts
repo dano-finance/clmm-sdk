@@ -1,7 +1,7 @@
 import { Assets, OutRef, UTxO } from "@lucid-evolution/lucid";
 import { ApiMultiAsset, ApiReferenceInput, ApiUtxo } from "./lpResponse.js";
 
-// Helper functions to parse API response
+/** @internal */
 export const apiToAssets = (
   multiAssets: ApiMultiAsset[] | undefined,
   coin: string
@@ -18,6 +18,7 @@ export const apiToAssets = (
   return assets;
 };
 
+/** @internal */
 export const apiToUtxo = (apiUtxo: ApiUtxo | null): UTxO => {
   if (apiUtxo == null || apiUtxo == undefined || !apiUtxo?.outRef) {
     throw new Error("apiToUtxo: outRef is missing");
@@ -36,6 +37,7 @@ export const apiToUtxo = (apiUtxo: ApiUtxo | null): UTxO => {
   };
 };
 
+/** @internal */
 export const apiToRefUtxo = (apiRef: ApiReferenceInput): OutRef => {
   const [txHash, outputIndex] = apiRef.outRef.split("#");
   if (txHash === undefined || outputIndex === undefined) {

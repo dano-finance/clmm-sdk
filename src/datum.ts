@@ -3,6 +3,7 @@ import { PoolDatum } from "./lpResponse.js";
 import { encodeData } from "./encode.js";
 import * as cbor from "cbor";
 
+/** @internal */
 export const transformPoolDatum = (datum: PoolDatum): string => {
   const TokenIdSchema = Data.Tuple([Data.Bytes(), Data.Bytes()]);
   const RationalSchema = Data.Tuple([Data.Integer(), Data.Integer()], {
@@ -57,6 +58,7 @@ export const transformPoolDatum = (datum: PoolDatum): string => {
   return encodeData(dataArray, PoolDatumSchema);
 };
 
+/** @internal */
 export const tokenIdToTuple = (tokenId: string): [string, string] => {
   if (!tokenId) return ["", ""];
 
@@ -77,6 +79,7 @@ export const tokenIdToTuple = (tokenId: string): [string, string] => {
   }
 };
 
+/** @internal */
 export const parseDatum = (datumHex: string): PoolDatum => {
   const decoded = cbor.decodeFirstSync(Buffer.from(datumHex, "hex"));
 

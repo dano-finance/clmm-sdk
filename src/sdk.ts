@@ -8,17 +8,16 @@ import {
 import {
   getSwapParameters,
   ApiResponse,
-  ApiUtxo,
   PoolDatum,
 } from "./lpResponse.js";
 import {
   Transaction,
 } from "@cardano-ogmios/schema";
-import { apiToAssets, apiToRefUtxo, apiToUtxo } from "./convertApi.js";
 import { swapTokensRedeemer } from "./redeemer.js";
 import { parseDatum, transformPoolDatum } from "./datum.js";
 import { buildMultiAssetsFromAssets, MultiAsset } from "./multiAssets.js";
 import { ConcentratedPool, DanogoPools } from "./concentratedPool.js";
+import { apiToAssets, apiToRefUtxo, apiToUtxo } from "./converters.js";
 import axios from "axios";
 
 class DanogoSwap {
@@ -229,20 +228,20 @@ class DanogoSwap {
   }
 
   /**
-   * Fetches a list of liquidity pools from the API and converts them into ApiUtxo objects.
+   * Fetches a list of liquidity pools from the API.
    *
    * @param limit The maximum number of pools to retrieve.
    * @param offset The pagination offset (cursor) for fetching the next batch of pools.
    * @param tokenA (Optional) Filter pools containing this token ID (policyId + hexName).
    * @param tokenB (Optional) Filter pools containing this token ID (policyId + hexName).
-   * @returns A promise that resolves to an array of `ApiUtxo` objects representing the liquidity pools.
+   * @returns A promise that resolves to an array of `ConcentratedPool` objects.
    */
   async getLiquidityPools(
     limit: number,
     offset: string,
     tokenA?: string,
     tokenB?: string
-  ): Promise<ApiUtxo[]> {
+  ): Promise<ConcentratedPool[]> {
     try {
       const response = await axios.get<ApiResponse<DanogoPools>>(
         `${this.apiPublicUrl}/api/v1/concentrated/pools`,
@@ -255,32 +254,7 @@ class DanogoSwap {
           },
         }
       );
-      return response.data.data.liquidityPools.map((pool: ConcentratedPool) => {
-        const datum: PoolDatum = {
-          tokenX: pool.tokenA,
-          tokenY: pool.tokenB,
-          sqrtLowerPriceNum: pool.priceLowerNum,
-          sqrtLowerPriceDen: pool.priceLowerDen,
-          sqrtUpperPriceNum: pool.priceUpperNum,
-          sqrtUpperPriceDen: pool.priceUpperDen,
-          lpFeeRate: pool.lpFeeRate,
-          platformFeeX: pool.platformFeeA,
-          platformFeeY: pool.platformFeeB,
-          minXChange: pool.minAChange,
-          minYChange: pool.minBChange,
-          circulatingLPToken: pool.lpTokenTotalSupply,
-          lastWithdrawEpoch: pool.lastWithdrawEpoch,
-        };
-
-        return {
-          outRef: pool.outRef,
-          address: pool.address,
-          coin: pool.coin,
-          multiAssets: pool.multiAssets,
-          datum: datum,
-          validityNft: pool.validityNft,
-        };
-      });
+      return response.data.data.liquidityPools;
     } catch (error) {
       console.error("Error fetching pools:", error);
       throw new Error("Could not fetch pools from the API.");
@@ -361,3 +335,4 @@ class DanogoSwap {
 }
 
 export default DanogoSwap;
+export { ConcentratedPool, DanogoPools, PoolDatum};

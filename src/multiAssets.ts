@@ -1,16 +1,20 @@
 import { ApiMultiAsset } from "./lpResponse";
+
 import { Value } from "@cardano-ogmios/schema";
 
+/** @internal */
 export interface MultiAsset {
   policyId: string;
   assets: Asset[];
 }
 
+/** @internal */
 interface Asset {
   name: string;
   value: string;
 }
 
+/** @internal */
 export const buildMultiAssetsFromAssets = (assets: Value): MultiAsset[] => {
   if (!assets || Object.keys(assets).length === 0) {
     return [];
