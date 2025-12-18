@@ -1,7 +1,22 @@
 import { Data } from "@lucid-evolution/lucid";
-import { PoolDatum } from "./lpResponse.js";
 import { encodeData } from "./encode.js";
 import * as cbor from "cbor";
+
+export interface PoolDatum {
+  tokenX: string;
+  tokenY: string;
+  sqrtLowerPriceNum: bigint;
+  sqrtLowerPriceDen: bigint;
+  sqrtUpperPriceNum: bigint;
+  sqrtUpperPriceDen: bigint;
+  lpFeeRate: number;
+  platformFeeX: bigint;
+  platformFeeY: bigint;
+  minXChange: bigint;
+  minYChange: bigint;
+  circulatingLPToken: bigint;
+  lastWithdrawEpoch: number;
+}
 
 /** @internal */
 export const transformPoolDatum = (datum: PoolDatum): string => {
@@ -63,16 +78,17 @@ export const tokenIdToTuple = (tokenId: string): [string, string] => {
   if (!tokenId) return ["", ""];
 
   try {
-    const parts = tokenId.split(".");
-    if (parts.length === 2) {
-      const policy = parts[0] ?? "";
-      const assetName = parts[1] ?? "";
-
-      if (assetName.length > 0) return [policy, assetName];
-
-      return [policy, ""];
+    if (tokenId.includes(".")) {
+      const parts = tokenId.split(".");
+      if (parts.length === 2) {
+        return [parts[0], parts[1]];
+      }
+      return [tokenId, ""];
     }
-    return [tokenId, ""];
+
+    const policy = tokenId.slice(0, 56);
+    const assetName = tokenId.slice(56);
+    return [policy, assetName];
   } catch (error) {
     console.error(`Error parsing token ID "${tokenId}":`, error);
     throw new Error(`Failed to parse token ID: ${tokenId}`);
@@ -103,10 +119,10 @@ export const parseDatum = (datumHex: string): PoolDatum => {
   };
 
   // Helper to parse Ratio (Constr 0 [Numerator, Denominator])
-  const parseRatio = (field: any): { num: string; den: string } => {
+  const parseRatio = (field: any): { num: bigint; den: bigint } => {
     const val = field instanceof cbor.Tagged ? field.value : field;
     if (Array.isArray(val) && val.length === 2) {
-      return { num: val[0].toString(), den: val[1].toString() };
+      return { num: val[0], den: val[1] };
     }
     throw new Error("Invalid Ratio structure");
   };

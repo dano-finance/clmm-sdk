@@ -1,15 +1,16 @@
 {
   "name": "danogo-clmm-sdk",
-  "version": "0.0.0",
+  "version": "0.0.8",
   "description": "An SDK to calculate and execute swaps on the Danogo liquidity platform.",
   "main": "./dist/sdk.js",
-  "module": "./dist/sdk.js",
+  "module": "./dist/sdk.mjs",
   "types": "./dist/sdk.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "start": "tsc && node dist/main.js",
+    "build": "tsup src/sdk.ts --format cjs,esm --dts --minify --clean --no-splitting",
     "prepublishOnly": "npm run build"
   },
   "publishConfig": {
@@ -21,6 +22,7 @@
     "cbor": "^10.0.11"
   },
   "devDependencies": {
+    "tsup": "^8.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   },

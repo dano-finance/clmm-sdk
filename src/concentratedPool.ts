@@ -1,29 +1,39 @@
-import { ApiMultiAsset } from "./lpResponse";
+import { OutRef } from "@lucid-evolution/lucid";
+import { MultiAsset } from "./multiAssets";
 
 export interface ConcentratedPool {
   outRef: string;
   address: string;
-  coin: string;
-  multiAssets: ApiMultiAsset[];
+  coin: bigint;
+  multiAssets: MultiAsset[];
   validityNft: string;
   tokenA: string;
-  tokenAReserve: string;
+  tokenAReserve: bigint;
   tokenB: string;
-  tokenBReserve: string;
+  tokenBReserve: bigint;
   lpFeeRate: number;
-  priceLowerNum: string;
-  priceLowerDen: string;
-  priceUpperNum: string;
-  priceUpperDen: string;
-  platformFeeA: string;
-  platformFeeB: string;
-  minAChange: string;
-  minBChange: string;
-  lpTokenTotalSupply: string;
+  priceLowerNum: bigint;
+  priceLowerDen: bigint;
+  priceUpperNum: bigint;
+  priceUpperDen: bigint;
+  platformFeeA: bigint;
+  platformFeeB: bigint;
+  minAChange: bigint;
+  minBChange: bigint;
+  lpTokenTotalSupply: bigint;
   lastWithdrawEpoch: number;
 }
 
-export interface DanogoPools {
-  liquidityPools: ConcentratedPool[];
-  offset: string;
+export interface SwapRequest {
+  poolOutRef: OutRef;
+  poolScriptOutRef: OutRef;
+  deltaAmount: bigint;
+  minOutChangeAmount: bigint;
+  stakingOutRef?: OutRef;
+}
+
+export interface QuoteSwapRequest {
+  poolOutRef: OutRef;
+  deltaAmount: bigint;
+  stakingOutRef?: OutRef;
 }

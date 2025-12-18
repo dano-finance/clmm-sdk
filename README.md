@@ -21,55 +21,49 @@ Initialize the SDK with the Danogo API URL. Optionally, you can provide a custom
 ```typescript
 import DanogoSwap from "danogo-clmm-sdk";
 
-const API_PUBLIC_URL = "https://api.danogo.io"; // Replace with actual API URL
-const sdk = new DanogoSwap(API_PUBLIC_URL);
+const sdk = new DanogoSwap();
 ```
 
-### 1. Fetch Liquidity Pools (API)
-
-Retrieve a list of available liquidity pools from the API.
-
-```typescript
-const limit = 10;
-const offset = "0"; // Pagination cursor
-
-// Optional: Filter by token policyID + hexName
-const tokenA = "tokenA"; 
-const tokenB = "tokenB";
-
-const pools = await sdk.getLiquidityPools(limit, offset, tokenA, tokenB);
-
-pools.forEach(pool => {
-  console.log("Pool ID:", pool.outRef);
-  console.log("Token A:", pool.tokenA);
-  console.log("Token B:", pool.tokenB);
-});
-```
-
-### 2. Calculate Swap Output (Preview)
+### 1. Calculate Swap Output (Quote)
 
 Calculate the expected output of a swap without submitting a transaction. This is useful for UI previews or checking rates.
 
 ```typescript
 import DanogoSwap from "danogo-clmm-sdk";
+import { Lucid, Kupmios } from "@lucid-evolution/lucid";
 
-const API_PUBLIC_URL = "https://api.danogo.io"; // Replace with actual API URL
-const sdk = new DanogoSwap(API_PUBLIC_URL);
+const sdk = new DanogoSwap();
 
-const poolId = "your_pool_id_here"; // e.g., "txHash#index"
-// Positive string: User sells Token X -> buys Token Y
-// Negative string: User sells Token Y -> buys Token X
-const deltaAmount = "1000000"; 
+async function main() {
+  const lucid = await Lucid(
+    new Kupmios("kupo_url", "ogmios_url"),
+    "Preprod"
+  );
 
-try {
-  const expectedOutput = await sdk.calculateSwapOut(poolId, deltaAmount);
-  console.log(`Expected output amount: ${expectedOutput}`);
-} catch (error) {
-  console.error("Calculation failed", error);
+  const quoteRequest = {
+    poolOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 0, // your output index
+    },
+    stakingOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 1, // your output index
+    },
+    deltaAmount: -3000000n,
+  };
+
+  try {
+    const expectedOutput = await sdk.calculateSwapOut(lucid, quoteRequest);
+    console.log(`Expected output amount: ${expectedOutput}`);
+  } catch (error) {
+    console.error("Calculation failed", error);
+  }
 }
 ```
 
-### 3. Submit Swap Transaction
+### 2. Submit Swap Transaction
 
 Build and submit a swap transaction using a Lucid instance.
 
@@ -77,8 +71,7 @@ Build and submit a swap transaction using a Lucid instance.
 import DanogoSwap from "danogo-clmm-sdk";
 import { Lucid, Kupmios } from "@lucid-evolution/lucid";
 
-const API_PUBLIC_URL = "https://api.danogo.io"; // Replace with actual API URL
-const sdk = new DanogoSwap(API_PUBLIC_URL);
+const sdk = new DanogoSwap();
 
 async function main() {
   // 1. Initialize Lucid with your provider (recommend Kupmios)
@@ -90,12 +83,28 @@ async function main() {
   // 2. Select wallet
   lucid.selectWallet.fromSeed("your seed phrase");
 
-  const poolId = "your_pool_id_here";
-  const deltaAmount = "1000000";
-  const minOutChangeAmount = "900000";
+  const swapRequest = {
+    poolOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 0, // your pool output index
+    },
+    poolScriptOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 0, // your pool script output index
+    },
+    stakingOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 1, // your staking output index
+    },
+    deltaAmount: -3000000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
+    minOutChangeAmount: 10000n, // Minimum amount of token received to accept
+  }
 
   try {
-    const txHash = await sdk.submitSwap(lucid, poolId, deltaAmount, minOutChangeAmount);
+    const txHash = await sdk.submitSwap(lucid, swapRequest);
     console.log(`Transaction submitted: ${txHash}`);
   } catch (error) {
     console.error("Swap failed", error);
@@ -117,7 +126,7 @@ Note for Kupmios Users: There is currently a known issue with lucid-evolution wh
  ```
 
 
- ### 4. Get Pool Info from Ogmios Transaction
+ ### 3. Get Pool Info from Ogmios Transaction
 
 Extract pool data directly from an Ogmios transaction object.
 
@@ -125,8 +134,7 @@ Extract pool data directly from an Ogmios transaction object.
 import DanogoSwap from "danogo-clmm-sdk";
 import { createInteractionContext, createChainSynchronizationClient } from "@cardano-ogmios/client";
 
-const API_PUBLIC_URL = "https://api.danogo.io"; // Replace with actual API URL
-const sdk = new DanogoSwap(API_PUBLIC_URL);
+const sdk = new DanogoSwap();
 
 async function main() {
   const context = await createInteractionContext(
@@ -162,7 +170,7 @@ async function main() {
 
   const checkpoint: Point = {
     slot: 109847210, // Replace with your slot
-    id: "50b267f93fbd85eccc1737abb06f8d2b96fbe07405dddfad4e303411b2b90706", // Replace with your block hash
+    id: "your_block_hash",
   };
 
   await client.resume([checkpoint]);

@@ -1,30 +1,19 @@
 import {
   LucidEvolution,
   TxBuilder,
-  UTxO,
-  Assets,
-  credentialToRewardAddress,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
-import {
-  getSwapParameters,
-  ApiResponse,
-  PoolDatum,
-} from "./lpResponse.js";
 import {
   Transaction,
 } from "@cardano-ogmios/schema";
 import { swapTokensRedeemer } from "./redeemer.js";
-import { parseDatum, transformPoolDatum } from "./datum.js";
+import { PoolDatum, parseDatum, transformPoolDatum } from "./datum.js";
 import { buildMultiAssetsFromAssets, MultiAsset } from "./multiAssets.js";
-import { ConcentratedPool, DanogoPools } from "./concentratedPool.js";
-import { apiToAssets, apiToRefUtxo, apiToUtxo } from "./converters.js";
-import axios from "axios";
+import { ConcentratedPool, QuoteSwapRequest, SwapRequest } from "./concentratedPool.js";
+import { calculateConcentratedPoolSwap, getEpoch } from "./utils.js";
 
 class DanogoSwap {
-  constructor(
-    public apiPublicUrl: string,
-    public poolScriptHash: string = "273a576a5de694ff507765c57b47efdc81ea7f13a43dc4441644fab0"
-  ) {}
+  constructor() {}
 
   /**
    * Calculates the expected output amount for a swap in a given liquidity pool.
@@ -38,147 +27,208 @@ class DanogoSwap {
    *                    - A negative string (e.g., "-1000000") indicates User sells Token Y to receive Token X.
    * @returns A promise that resolves to a `bigint` representing the amount of the output token you will receive.
    */
-  async calculateSwapOut(poolId: string, deltaAmount: string): Promise<bigint> {
-    try {
-      const { inputs, outputs } = await getSwapParameters(
-        poolId,
-        deltaAmount,
-        this.apiPublicUrl
-      );
-
-      const poolInUtxo = inputs.poolInUtxo;
-      const poolOutUtxo = outputs.poolOutUtxo;
-
-      // This logic is adapted from the compare-swap tool
-      const assetsIn = apiToAssets(poolInUtxo.multiAssets, poolInUtxo.coin);
-      const assetsOut = apiToAssets(poolOutUtxo.multiAssets, poolOutUtxo.coin);
-
-      const tokenXUnit =
-        poolOutUtxo.datum!.tokenX.replace(".", "") || "lovelace";
-      const tokenYUnit =
-        poolOutUtxo.datum!.tokenY.replace(".", "") || "lovelace";
-
-      const assetsToCompare = [
-        { unit: tokenXUnit, name: "Token X" },
-        { unit: tokenYUnit, name: "Token Y" },
-      ];
-
-      let tokenXChange = 0n;
-      let tokenYChange = 0n;
-
-      for (const token of assetsToCompare) {
-        const val1 = assetsIn[token.unit] || 0n;
-        const val2 = assetsOut[token.unit] || 0n;
-        if (val1 !== val2) {
-          const diff = val2 - val1; // diff > 0 means pool gained tokens
-          if (token.name === "Token X") {
-            tokenXChange = diff;
-          } else {
-            tokenYChange = diff;
-          }
-        }
-      }
-
-      // If the pool's balance of Token Y decreased, that's the amount paid out.
-      if (tokenYChange < 0n) {
-        return -tokenYChange;
-      }
-      // If the pool's balance of Token X decreased, that's the amount paid out.
-      if (tokenXChange < 0n) {
-        return -tokenXChange;
-      }
-
-      return 0n; // Should not happen in a valid swap
-    } catch (error) {
-      console.error("Failed to calculate swap output:", error);
-      throw new Error("Could not calculate the swap output amount.");
+  async calculateSwapOut(
+    lucid: LucidEvolution,
+    request: QuoteSwapRequest
+  ): Promise<bigint> {
+    if (!lucid || !lucid.wallet()) {
+      throw new Error("Please connect a wallet first.");
     }
+    const poolInUtxo = (
+      await lucid.utxosByOutRef([
+        {
+          txHash: request.poolOutRef.txHash,
+          outputIndex: request.poolOutRef.outputIndex,
+        },
+      ])
+    )[0];
+    let stakingRefUtxo = null;
+    if (request.stakingOutRef) {
+      stakingRefUtxo = (
+        await lucid.utxosByOutRef([
+          {
+            txHash: request.stakingOutRef.txHash,
+            outputIndex: request.stakingOutRef.outputIndex,
+          },
+        ])
+      )[0];
+    }
+    if (!poolInUtxo.datum) {
+      throw new Error("Pool input UTxO does not contain a datum.");
+    }
+
+    const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
+    const tokenA = poolInDatum.tokenX || "lovelace";
+    const tokenB = poolInDatum.tokenY;
+    const coin = poolInUtxo.assets.lovelace;
+    const getTokenAmount = (tokenId: string) => {
+      if (tokenId === "lovelace") return coin;
+      for (const [token, quantity] of Object.entries(poolInUtxo.assets)) {
+        if (token === tokenId) return quantity;
+      }
+      return 0n;
+    };
+
+    // Initialize the transaction builder
+    let tx: TxBuilder = lucid.newTx();
+
+    let rewardAmount = 0n,
+      stakingRewardAddress = "";
+    if (tokenA == "lovelace") {
+      stakingRewardAddress = validatorToRewardAddress(
+        lucid.config().network!,
+        stakingRefUtxo!.scriptRef!
+      );
+      try {
+        rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
+      } catch (e) {
+        rewardAmount = 0n;
+      }
+    }
+    const [tokenToReceiveAmount, _] = calculateConcentratedPoolSwap(
+      getTokenAmount(tokenA),
+      getTokenAmount(tokenB),
+      poolInDatum,
+      request.deltaAmount,
+      rewardAmount
+    );
+
+    return tokenToReceiveAmount;
   }
 
   /**
    * Builds and submits a swap transaction to the network.
    *
    * @param lucid An initialized Lucid instance with a connected wallet.
-   * @param poolId The ID of the liquidity pool.
-   * @param deltaAmount The amount to swap (positive for User sells X -> Y, negative for User sells Y -> X).
+   * @param request The swap request object containing pool reference, swap amount, and minimum output.
    * @returns A promise that resolves to the transaction hash.
    */
   async submitSwap(
     lucid: LucidEvolution,
-    poolId: string,
-    deltaAmount: string,
-    minOutChangeAmount: string
+    request: SwapRequest
   ): Promise<string> {
-    const {
-      inputs: apiInputs,
-      outputs: apiOutputs,
-      referenceInputs: apiRefInputs,
-      withdrawal: apiWithdrawal,
-    } = await getSwapParameters(poolId, deltaAmount, this.apiPublicUrl);
-
     if (!lucid || !lucid.wallet()) {
       throw new Error("Please connect a wallet first.");
     }
+    const poolInUtxo = (
+      await lucid.utxosByOutRef([
+        {
+          txHash: request.poolOutRef.txHash,
+          outputIndex: request.poolOutRef.outputIndex,
+        },
+      ])
+    )[0];
+    const poolScriptUtxo = (
+      await lucid.utxosByOutRef([
+        {
+          txHash: request.poolScriptOutRef.txHash,
+          outputIndex: request.poolScriptOutRef.outputIndex,
+        },
+      ])
+    )[0]
+    let stakingRefUtxo = null;
+    if (request.stakingOutRef) {
+      stakingRefUtxo = (
+        await lucid.utxosByOutRef([
+          {
+            txHash: request.stakingOutRef.txHash,
+            outputIndex: request.stakingOutRef.outputIndex,
+          },
+        ])
+      )[0];
+    }
+    if (!poolInUtxo.datum) {
+      throw new Error("Pool input UTxO does not contain a datum.");
+    }
 
-    const tokenX = apiOutputs.poolOutUtxo.datum!.tokenX;
-    const tokenY = apiOutputs.poolOutUtxo.datum!.tokenY;
-    const deltaAmountBigInt = BigInt(deltaAmount);
-    const tokenIn = deltaAmountBigInt > 0n ? tokenX : tokenY;
-    const tokenOut = deltaAmountBigInt > 0n ? tokenY : tokenX;
+    const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
+    const tokenA = poolInDatum.tokenX || "lovelace";
+    const tokenB = poolInDatum.tokenY;
+    const coin = poolInUtxo.assets.lovelace;
+    const getTokenAmount = (tokenId: string) => {
+      if (tokenId === "lovelace") return coin;
+      for (const [token, quantity] of Object.entries(poolInUtxo.assets)) {
+        if (token === tokenId) return quantity;
+      }
+      return 0n;
+    };
+
+    const deltaAmount = request.deltaAmount;
+    const tokenIn = deltaAmount > 0 ? tokenA : tokenB;
+    const tokenOut = deltaAmount > 0 ? tokenB : tokenA;
 
     // Initialize the transaction builder
     let tx: TxBuilder = lucid.newTx();
 
     // 1. Check user wallet has enough tokenIn
     const userUtxos = await lucid.wallet().getUtxos();
-    const tokenInId = tokenIn.replace(".", "") || "lovelace";
     const totalTokenInBalance = userUtxos.reduce(
-      (acc, utxo) => acc + (utxo.assets[tokenInId] || 0n),
+      (acc, utxo) => acc + (utxo.assets[tokenIn] || 0n),
       0n
     );
-    const requiredAmount =
-      deltaAmountBigInt < 0n ? -deltaAmountBigInt : deltaAmountBigInt;
+    const requiredAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
     if (totalTokenInBalance < requiredAmount) {
       throw new Error(
-        `Insufficient ${tokenInId} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`
+        `Insufficient ${tokenIn} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`
       );
     }
-
-    // 2. Collect Inputs from API
-    const poolInUtxos: UTxO[] = [apiToUtxo(apiInputs.poolInUtxo)];
-    if (!poolInUtxos.length) throw new Error("Could not find pool input UTxO.");
 
     // 3. Add Reference Inputs
-    const refUtxos = apiRefInputs.map(apiToRefUtxo);
-    const refUtxosOnChain: UTxO[] = await lucid.utxosByOutRef(refUtxos);
-    tx = tx.readFrom(refUtxosOnChain);
+    tx = tx.readFrom([poolScriptUtxo]);
+    if (stakingRefUtxo) {
+      tx = tx.readFrom([stakingRefUtxo]);
+    }
 
     // 4. Add Outputs
-    const poolOutUtxo = apiOutputs.poolOutUtxo;
-    const assets: Assets = apiToAssets(
-      poolOutUtxo.multiAssets,
-      poolOutUtxo.coin
+    let rewardAmount = 0n,
+      stakingRewardAddress = "";
+    if (tokenA == "lovelace") {
+      stakingRewardAddress = validatorToRewardAddress(
+        lucid.config().network!,
+        stakingRefUtxo!.scriptRef!
+      );
+      try {
+        rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
+      } catch (e) {
+        rewardAmount = 0n;
+      }
+    }
+    const [tokenToReceiveAmount, platformFee] = calculateConcentratedPoolSwap(
+      getTokenAmount(tokenA),
+      getTokenAmount(tokenB),
+      poolInDatum,
+      deltaAmount,
+      rewardAmount
     );
-    const tokenOutId = tokenOut.replace(".", "") || "lovelace";
-    const poolInAssets = apiToAssets(
-      apiInputs.poolInUtxo.multiAssets,
-      apiInputs.poolInUtxo.coin
-    );
-    const actualOutput = poolInAssets[tokenOutId] - assets[tokenOutId];
-    if (actualOutput < BigInt(minOutChangeAmount)) {
+    if (tokenToReceiveAmount < request.minOutChangeAmount) {
       throw new Error(
-        `Slippage too high. Minimum expected output: ${minOutChangeAmount}, Actual output: ${actualOutput}`
+        `Slippage too high. Expected at least ${request.minOutChangeAmount} but got ${tokenToReceiveAmount}`
       );
     }
 
-    const transformedDatum = transformPoolDatum(poolOutUtxo.datum!);
+    const currentEpoch = getEpoch(Date.now(), lucid.config().network!);
+    const transformedDatum = transformPoolDatum({
+      ...poolInDatum,
+      platformFeeX:
+        BigInt(poolInDatum.platformFeeX) +
+        (tokenIn === poolInDatum.tokenX ? platformFee : 0n),
+      platformFeeY:
+        BigInt(poolInDatum.platformFeeY) +
+        (tokenIn === poolInDatum.tokenY ? platformFee : 0n),
+      lastWithdrawEpoch: currentEpoch,
+    });
+    const poolOutAssets = { ...poolInUtxo.assets };
+    poolOutAssets[tokenIn] =
+      poolOutAssets[tokenIn] + (deltaAmount > 0n ? deltaAmount : -deltaAmount);
+    poolOutAssets[tokenOut] =
+      BigInt(poolOutAssets[tokenOut]) - BigInt(tokenToReceiveAmount);
     tx = tx.pay.ToAddressWithData(
-      poolOutUtxo.address,
+      poolInUtxo.address,
       {
         kind: "inline",
         value: transformedDatum,
       },
-      assets
+      poolOutAssets
     );
 
     // 5. Add Metadata
@@ -187,30 +237,22 @@ class DanogoSwap {
     });
 
     // 6. Add spend & withdrawal
-    const rewardScriptHash = apiWithdrawal.rewardAddressScriptHash;
-    const rewardAddress = credentialToRewardAddress(lucid.config().network!, {
-      type: "Script",
-      hash: rewardScriptHash,
-    });
-
-    tx = tx
-      .collectFrom(
-        poolInUtxos,
-        swapTokensRedeemer(poolInUtxos, [deltaAmountBigInt])
-      )
-      .withdraw(
-        rewardAddress,
-        0n,
-        swapTokensRedeemer(poolInUtxos, [deltaAmountBigInt])
-      );
-
-    if (tokenX === "" && apiWithdrawal.stakeRewards) {
+    tx = tx.collectFrom([poolInUtxo], swapTokensRedeemer([poolInUtxo], [deltaAmount]));
+    tx = tx.withdraw(
+      validatorToRewardAddress(
+        lucid.config().network!,
+        poolScriptUtxo.scriptRef!
+      ),
+      0n,
+      swapTokensRedeemer([poolInUtxo], [deltaAmount])
+    );
+    // if tokenX is ADA
+    if (tokenA === "lovelace" && currentEpoch > poolInDatum.lastWithdrawEpoch)
       tx = tx.withdraw(
-        apiWithdrawal.stakeAddress!,
-        BigInt(apiWithdrawal.stakeRewards),
-        swapTokensRedeemer(poolInUtxos, [deltaAmountBigInt])
+        stakingRewardAddress,
+        rewardAmount,
+        swapTokensRedeemer([poolInUtxo], [deltaAmount])
       );
-    }
 
     // 7. Finalize and Submit
     tx = tx
@@ -222,43 +264,8 @@ class DanogoSwap {
     const builtTx = await tx.complete({
       localUPLCEval: false,
     });
-    console.log({ builtTx: builtTx.toCBOR() });
     const signedTx = await builtTx.sign.withWallet().complete();
     return await signedTx.submit();
-  }
-
-  /**
-   * Fetches a list of liquidity pools from the API.
-   *
-   * @param limit The maximum number of pools to retrieve.
-   * @param offset The pagination offset (cursor) for fetching the next batch of pools.
-   * @param tokenA (Optional) Filter pools containing this token ID (policyId + hexName).
-   * @param tokenB (Optional) Filter pools containing this token ID (policyId + hexName).
-   * @returns A promise that resolves to an array of `ConcentratedPool` objects.
-   */
-  async getLiquidityPools(
-    limit: number,
-    offset: string,
-    tokenA?: string,
-    tokenB?: string
-  ): Promise<ConcentratedPool[]> {
-    try {
-      const response = await axios.get<ApiResponse<DanogoPools>>(
-        `${this.apiPublicUrl}/api/v1/concentrated/pools`,
-        {
-          params: {
-            limit,
-            offset,
-            tokenA,
-            tokenB,
-          },
-        }
-      );
-      return response.data.data.liquidityPools;
-    } catch (error) {
-      console.error("Error fetching pools:", error);
-      throw new Error("Could not fetch pools from the API.");
-    }
   }
 
   /**
@@ -273,19 +280,20 @@ class DanogoSwap {
    */
   getPoolsFromOgmiosTx(
     tx: Transaction,
+    poolScriptHash: string
   ): ConcentratedPool[] {
     const concentratedPools: ConcentratedPool[] = [];
 
     tx.outputs.forEach((utxo, index) => {
       const val = utxo.value;
-      const policyAssets = val[this.poolScriptHash];
+      const policyAssets = val[poolScriptHash];
 
       if (policyAssets && utxo.datum) {
         for (const [assetName, quantity] of Object.entries(policyAssets)) {
           if (quantity === 1n) {
-            const poolNft = this.poolScriptHash + assetName;
+            const poolNft = poolScriptHash + assetName;
             const outRef = `${tx.id}#${index}`;
-            const coin = val.ada.lovelace.toString();
+            const coin = val.ada.lovelace;
             const multiAssets: MultiAsset[] = buildMultiAssetsFromAssets(val);
             const datum: PoolDatum = parseDatum(utxo.datum);
 
@@ -293,15 +301,14 @@ class DanogoSwap {
             const tokenB = datum.tokenY;
 
             const getTokenReserve = (tokenId: string) => {
-              const id = tokenId.replace(".", "");
-              if (id === "lovelace" || id === "") return coin;
-              const policyId = id.slice(0, 56);
-              const assetName = id.slice(56);
+              if (tokenId === "lovelace" || tokenId === "") return coin;
+              const policyId = tokenId.slice(0, 56);
+              const assetName = tokenId.slice(56);
               const policyGroup = multiAssets.find(
                 (ma) => ma.policyId === policyId
               );
               const asset = policyGroup?.assets.find((a) => a.name === assetName);
-              return asset ? asset.value : "0";
+              return asset ? asset.value : 0n;
             };
 
             concentratedPools.push({
@@ -335,4 +342,4 @@ class DanogoSwap {
 }
 
 export default DanogoSwap;
-export { ConcentratedPool, DanogoPools, PoolDatum};
+export { ConcentratedPool, PoolDatum, SwapRequest };

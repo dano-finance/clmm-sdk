@@ -1,8 +1,5 @@
-import { ApiMultiAsset } from "./lpResponse";
-
 import { Value } from "@cardano-ogmios/schema";
 
-/** @internal */
 export interface MultiAsset {
   policyId: string;
   assets: Asset[];
@@ -11,7 +8,7 @@ export interface MultiAsset {
 /** @internal */
 interface Asset {
   name: string;
-  value: string;
+  value: bigint;
 }
 
 /** @internal */
@@ -20,16 +17,18 @@ export const buildMultiAssetsFromAssets = (assets: Value): MultiAsset[] => {
     return [];
   }
 
-  const multiAssets: ApiMultiAsset[] = [];
+  const multiAssets: MultiAsset[] = [];
 
   for (const [policyId, assetsMap] of Object.entries(assets)) {
     if (policyId === "ada") continue;
 
     const currentAssets: Asset[] = [];
-    for (const [assetName, quantity] of Object.entries(assetsMap as any)) {
+    for (const [assetName, quantity] of Object.entries(
+      assetsMap as { [k: string]: bigint }
+    )) {
       currentAssets.push({
         name: assetName,
-        value: (quantity as any).toString(),
+        value: quantity as bigint,
       });
     }
 
