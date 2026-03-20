@@ -31,7 +31,7 @@ export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
 }
 
 /** @internal */
-export const swapTokensRedeemer = (poolInUtxos: UTxO[], deltaAmounts: bigint[]) => {
+export const swapTokensRedeemer = (poolInUtxos: UTxO[], deltaAmounts: bigint[], protocolConfigIdx: bigint, isWithdrawZero: boolean) => {
   try {
     // currently, only support one pool in -> one pool out
     const redeemer: RedeemerBuilder = {
@@ -41,19 +41,20 @@ export const swapTokensRedeemer = (poolInUtxos: UTxO[], deltaAmounts: bigint[]) 
       makeRedeemer: (inputIdxs: bigint[]) => {
         const SWAP_ACTION = 3n
         // Convert each number to a byte array of a specific, padded length
+        const firstBytes = bigintToBytesPadded(isWithdrawZero ? protocolConfigIdx : inputIdxs[0], 1);
         const poolInBytes = bigintToBytesPadded(inputIdxs[0], 1);
         const actionBytes = bigintToBytesPadded(SWAP_ACTION, 1);
         const poolOutBytes = bigintToBytesPadded(0n, 1); // has only one pool out, already make sure put pool out is the first element
         const amountBytes = bigintToBytesPadded(deltaAmounts[0], 32); // swap 1 pool -> 1 deltaAmount
 
         // Create a new Uint8Array to hold the concatenated bytes
-        const totalLength = poolInBytes.length + actionBytes.length + poolInBytes.length + poolOutBytes.length + amountBytes.length;
+        const totalLength = firstBytes.length + actionBytes.length + poolInBytes.length + poolOutBytes.length + amountBytes.length;
         const concatenatedBytes = new Uint8Array(totalLength);
 
         // Copy the bytes from each part into the final array
         let pos = 0;
-        concatenatedBytes.set(poolInBytes, pos);
-        pos += poolInBytes.length;
+        concatenatedBytes.set(firstBytes, pos);
+        pos += firstBytes.length;
         concatenatedBytes.set(actionBytes, pos);
         pos += actionBytes.length;
         concatenatedBytes.set(poolInBytes, pos);

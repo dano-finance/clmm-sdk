@@ -12,10 +12,16 @@ export interface PoolDatum {
   lpFeeRate: number;
   platformFeeX: bigint;
   platformFeeY: bigint;
+  totalSwapFee: bigint;
   minXChange: bigint;
   minYChange: bigint;
   circulatingLPToken: bigint;
   lastWithdrawEpoch: number;
+}
+
+export interface ProtocolConfigDatum {
+  platformFeeRate: bigint,
+  swapFee: bigint
 }
 
 /** @internal */
@@ -31,6 +37,7 @@ export const transformPoolDatum = (datum: PoolDatum): string => {
       Data.Integer(), // lpFeeRate
       Data.Integer(), // platformFeeX
       Data.Integer(), // platformFeeY,
+      Data.Integer(), // totalSwapFee
       RationalSchema, // sqrtLowerPrice
       RationalSchema, // sqrtUpperPrice
       Data.Integer(), // minXChange
@@ -50,6 +57,7 @@ export const transformPoolDatum = (datum: PoolDatum): string => {
     bigint,
     bigint,
     bigint,
+    bigint,
     [bigint, bigint],
     [bigint, bigint],
     bigint,
@@ -62,6 +70,7 @@ export const transformPoolDatum = (datum: PoolDatum): string => {
     BigInt(datum.lpFeeRate),
     BigInt(datum.platformFeeX),
     BigInt(datum.platformFeeY),
+    BigInt(datum.totalSwapFee),
     [BigInt(datum.sqrtLowerPriceNum), BigInt(datum.sqrtLowerPriceDen)],
     [BigInt(datum.sqrtUpperPriceNum), BigInt(datum.sqrtUpperPriceDen)],
     BigInt(datum.minXChange),
@@ -71,6 +80,24 @@ export const transformPoolDatum = (datum: PoolDatum): string => {
   ];
 
   return encodeData(dataArray, PoolDatumSchema);
+};
+
+/** @internal */
+export const transformProtocolConfigDatum = (datum: ProtocolConfigDatum): string => {
+  const ProtocolConfigDatumSchema = Data.Tuple(
+    [
+      Data.Integer(), // platformFeeRate
+      Data.Integer(), // swapFee
+    ],
+    { hasConstr: true }
+  );
+
+  const dataArray: [bigint, bigint] = [
+    BigInt(datum.platformFeeRate),
+    BigInt(datum.swapFee),
+  ];
+
+  return encodeData(dataArray, ProtocolConfigDatumSchema);
 };
 
 /** @internal */
@@ -133,13 +160,32 @@ export const parseDatum = (datumHex: string): PoolDatum => {
     lpFeeRate: Number(fields[2]),
     platformFeeX: fields[3].toString(),
     platformFeeY: fields[4].toString(),
-    sqrtLowerPriceNum: parseRatio(fields[5]).num,
-    sqrtLowerPriceDen: parseRatio(fields[5]).den,
-    sqrtUpperPriceNum: parseRatio(fields[6]).num,
-    sqrtUpperPriceDen: parseRatio(fields[6]).den,
-    minXChange: fields[7].toString(),
-    minYChange: fields[8].toString(),
-    circulatingLPToken: fields[9].toString(),
-    lastWithdrawEpoch: Number(fields[10]),
+    totalSwapFee: fields[5].toString(),
+    sqrtLowerPriceNum: parseRatio(fields[6]).num,
+    sqrtLowerPriceDen: parseRatio(fields[6]).den,
+    sqrtUpperPriceNum: parseRatio(fields[7]).num,
+    sqrtUpperPriceDen: parseRatio(fields[7]).den,
+    minXChange: fields[8].toString(),
+    minYChange: fields[9].toString(),
+    circulatingLPToken: fields[10].toString(),
+    lastWithdrawEpoch: Number(fields[11]),
+  };
+};
+
+/** @internal */
+export const parseProtocolConfigDatum = (datumHex: string): ProtocolConfigDatum => {
+  const decoded = cbor.decodeFirstSync(Buffer.from(datumHex, "hex"));
+
+  // Plutus Data is typically encoded as a Tagged value (Tag 121 for Constr 0)
+  // The value inside is an array of fields.
+  const fields = decoded instanceof cbor.Tagged ? decoded.value : decoded;
+
+  if (!Array.isArray(fields)) {
+    throw new Error("Invalid datum structure: expected array of fields");
+  }
+
+  return {
+    platformFeeRate: fields[0].toString(),
+    swapFee: fields[1].toString(),
   };
 };

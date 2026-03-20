@@ -3,33 +3,45 @@ import {
   TxBuilder,
   validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
-import {
-  Transaction,
-} from "@cardano-ogmios/schema";
+import { Transaction } from "@cardano-ogmios/schema";
 import { swapTokensRedeemer } from "./redeemer.js";
-import { PoolDatum, parseDatum, transformPoolDatum } from "./datum.js";
+import {
+  PoolDatum,
+  parseDatum,
+  parseProtocolConfigDatum,
+  transformPoolDatum,
+} from "./datum.js";
 import { buildMultiAssetsFromAssets, MultiAsset } from "./multiAssets.js";
-import { ConcentratedPool, QuoteSwapRequest, SwapRequest } from "./concentratedPool.js";
-import { calculateConcentratedPoolSwap, getEpoch } from "./utils.js";
+import {
+  ConcentratedPool,
+  QuoteSwapRequest,
+  SwapRequest,
+} from "./concentratedPool.js";
+import {
+  calculateConcentratedPoolSwap,
+  getEpoch,
+  getPoolProtocolConfigIdx,
+} from "./utils.js";
 
 class DanogoSwap {
   constructor() {}
 
   /**
-   * Calculates the expected output amount for a swap in a given liquidity pool.
+   * Calculates the expected output amount for a swap in a specific liquidity pool.
    *
-   * This function communicates with the backend API to get swap parameters but does not
-   * submit a transaction. It's a read-only operation to preview a swap's result.
+   * This function retrieves the latest pool state from the blockchain and performs a local calculation
+   * to estimate the swap outcome. It does not submit any transaction to the network.
    *
-   * @param poolId The ID of the liquidity pool.
-   * @param deltaAmount The amount of the input token to swap.
-   *                    - A positive string (e.g., "1000000") indicates User sells Token X to receive Token Y.
-   *                    - A negative string (e.g., "-1000000") indicates User sells Token Y to receive Token X.
-   * @returns A promise that resolves to a `bigint` representing the amount of the output token you will receive.
+   * @param lucid An initialized Lucid instance used to query the blockchain.
+   * @param request The quote request object containing pool references and the swap amount.
+   *                - `deltaAmount`: The amount of the input token to swap.
+   *                  - Positive (> 0): Swaps Token X for Token Y.
+   *                  - Negative (< 0): Swaps Token Y for Token X.
+   * @returns A promise that resolves to a `bigint` representing the estimated output token amount.
    */
   async calculateSwapOut(
     lucid: LucidEvolution,
-    request: QuoteSwapRequest
+    request: QuoteSwapRequest,
   ): Promise<bigint> {
     if (!lucid || !lucid.wallet()) {
       throw new Error("Please connect a wallet first.");
@@ -56,7 +68,21 @@ class DanogoSwap {
     if (!poolInUtxo.datum) {
       throw new Error("Pool input UTxO does not contain a datum.");
     }
-
+    const protocolConfigUtxo = (
+      await lucid.utxosByOutRef([
+        {
+          txHash: request.protocolConfigOutRef.txHash,
+          outputIndex: request.protocolConfigOutRef.outputIndex,
+        },
+      ])
+    )[0];
+    if (!protocolConfigUtxo.datum) {
+      throw new Error("Protocol config UTxO does not contain a datum.");
+    }
+    const protocolConfigDatum = parseProtocolConfigDatum(
+      protocolConfigUtxo.datum,
+    );
+    // 1732
     const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
     const tokenA = poolInDatum.tokenX || "lovelace";
     const tokenB = poolInDatum.tokenY;
@@ -69,15 +95,12 @@ class DanogoSwap {
       return 0n;
     };
 
-    // Initialize the transaction builder
-    let tx: TxBuilder = lucid.newTx();
-
     let rewardAmount = 0n,
       stakingRewardAddress = "";
     if (tokenA == "lovelace") {
       stakingRewardAddress = validatorToRewardAddress(
         lucid.config().network!,
-        stakingRefUtxo!.scriptRef!
+        stakingRefUtxo!.scriptRef!,
       );
       try {
         rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
@@ -90,7 +113,8 @@ class DanogoSwap {
       getTokenAmount(tokenB),
       poolInDatum,
       request.deltaAmount,
-      rewardAmount
+      rewardAmount,
+      protocolConfigDatum.platformFeeRate
     );
 
     return tokenToReceiveAmount;
@@ -105,7 +129,7 @@ class DanogoSwap {
    */
   async submitSwap(
     lucid: LucidEvolution,
-    request: SwapRequest
+    request: SwapRequest,
   ): Promise<string> {
     if (!lucid || !lucid.wallet()) {
       throw new Error("Please connect a wallet first.");
@@ -125,7 +149,7 @@ class DanogoSwap {
           outputIndex: request.poolScriptOutRef.outputIndex,
         },
       ])
-    )[0]
+    )[0];
     let stakingRefUtxo = null;
     if (request.stakingOutRef) {
       stakingRefUtxo = (
@@ -140,6 +164,20 @@ class DanogoSwap {
     if (!poolInUtxo.datum) {
       throw new Error("Pool input UTxO does not contain a datum.");
     }
+    const protocolConfigUtxo = (
+      await lucid.utxosByOutRef([
+        {
+          txHash: request.protocolConfigOutRef.txHash,
+          outputIndex: request.protocolConfigOutRef.outputIndex,
+        },
+      ])
+    )[0];
+    if (!protocolConfigUtxo.datum) {
+      throw new Error("Protocol config UTxO does not contain a datum.");
+    }
+    const protocolConfigDatum = parseProtocolConfigDatum(
+      protocolConfigUtxo.datum,
+    );
 
     const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
     const tokenA = poolInDatum.tokenX || "lovelace";
@@ -164,17 +202,17 @@ class DanogoSwap {
     const userUtxos = await lucid.wallet().getUtxos();
     const totalTokenInBalance = userUtxos.reduce(
       (acc, utxo) => acc + (utxo.assets[tokenIn] || 0n),
-      0n
+      0n,
     );
     const requiredAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
     if (totalTokenInBalance < requiredAmount) {
       throw new Error(
-        `Insufficient ${tokenIn} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`
+        `Insufficient ${tokenIn} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`,
       );
     }
 
     // 3. Add Reference Inputs
-    tx = tx.readFrom([poolScriptUtxo]);
+    tx = tx.readFrom([poolScriptUtxo, protocolConfigUtxo]);
     if (stakingRefUtxo) {
       tx = tx.readFrom([stakingRefUtxo]);
     }
@@ -185,7 +223,7 @@ class DanogoSwap {
     if (tokenA == "lovelace") {
       stakingRewardAddress = validatorToRewardAddress(
         lucid.config().network!,
-        stakingRefUtxo!.scriptRef!
+        stakingRefUtxo!.scriptRef!,
       );
       try {
         rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
@@ -198,11 +236,12 @@ class DanogoSwap {
       getTokenAmount(tokenB),
       poolInDatum,
       deltaAmount,
-      rewardAmount
+      rewardAmount,
+      protocolConfigDatum.platformFeeRate
     );
     if (tokenToReceiveAmount < request.minOutChangeAmount) {
       throw new Error(
-        `Slippage too high. Expected at least ${request.minOutChangeAmount} but got ${tokenToReceiveAmount}`
+        `Slippage too high. Expected at least ${request.minOutChangeAmount} but got ${tokenToReceiveAmount}`,
       );
     }
 
@@ -211,24 +250,28 @@ class DanogoSwap {
       ...poolInDatum,
       platformFeeX:
         BigInt(poolInDatum.platformFeeX) +
-        (tokenIn === poolInDatum.tokenX ? platformFee : 0n),
+        (tokenIn === (poolInDatum.tokenX || "lovelace") ? platformFee : 0n),
       platformFeeY:
         BigInt(poolInDatum.platformFeeY) +
         (tokenIn === poolInDatum.tokenY ? platformFee : 0n),
       lastWithdrawEpoch: currentEpoch,
+      totalSwapFee:
+        BigInt(poolInDatum.totalSwapFee) + BigInt(protocolConfigDatum.swapFee),
     });
     const poolOutAssets = { ...poolInUtxo.assets };
     poolOutAssets[tokenIn] =
       poolOutAssets[tokenIn] + (deltaAmount > 0n ? deltaAmount : -deltaAmount);
     poolOutAssets[tokenOut] =
       BigInt(poolOutAssets[tokenOut]) - BigInt(tokenToReceiveAmount);
+    poolOutAssets.lovelace =
+      BigInt(poolOutAssets.lovelace) + BigInt(protocolConfigDatum.swapFee);
     tx = tx.pay.ToAddressWithData(
       poolInUtxo.address,
       {
         kind: "inline",
         value: transformedDatum,
       },
-      poolOutAssets
+      poolOutAssets,
     );
 
     // 5. Add Metadata
@@ -237,21 +280,32 @@ class DanogoSwap {
     });
 
     // 6. Add spend & withdrawal
-    tx = tx.collectFrom([poolInUtxo], swapTokensRedeemer([poolInUtxo], [deltaAmount]));
+    const referenceInputs = [poolScriptUtxo, protocolConfigUtxo];
+    if (stakingRefUtxo) {
+      referenceInputs.push(stakingRefUtxo);
+    }
+    const protocolConfigIdx = getPoolProtocolConfigIdx(
+      protocolConfigUtxo,
+      referenceInputs,
+    );
+    tx = tx.collectFrom(
+      [poolInUtxo],
+      swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, false),
+    );
     tx = tx.withdraw(
       validatorToRewardAddress(
         lucid.config().network!,
-        poolScriptUtxo.scriptRef!
+        poolScriptUtxo.scriptRef!,
       ),
       0n,
-      swapTokensRedeemer([poolInUtxo], [deltaAmount])
+      swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, true),
     );
     // if tokenX is ADA
     if (tokenA === "lovelace" && currentEpoch > poolInDatum.lastWithdrawEpoch)
       tx = tx.withdraw(
         stakingRewardAddress,
         rewardAmount,
-        swapTokensRedeemer([poolInUtxo], [deltaAmount])
+        swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, false),
       );
 
     // 7. Finalize and Submit
@@ -305,9 +359,11 @@ class DanogoSwap {
               const policyId = tokenId.slice(0, 56);
               const assetName = tokenId.slice(56);
               const policyGroup = multiAssets.find(
-                (ma) => ma.policyId === policyId
+                (ma) => ma.policyId === policyId,
               );
-              const asset = policyGroup?.assets.find((a) => a.name === assetName);
+              const asset = policyGroup?.assets.find(
+                (a) => a.name === assetName,
+              );
               return asset ? asset.value : 0n;
             };
 
@@ -332,6 +388,7 @@ class DanogoSwap {
               minBChange: datum.minYChange,
               lpTokenTotalSupply: datum.circulatingLPToken,
               lastWithdrawEpoch: datum.lastWithdrawEpoch,
+              totalSwapFee: datum.totalSwapFee
             });
           }
         }

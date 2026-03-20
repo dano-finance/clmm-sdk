@@ -22,6 +22,7 @@ export interface ConcentratedPool {
   minBChange: bigint;
   lpTokenTotalSupply: bigint;
   lastWithdrawEpoch: number;
+  totalSwapFee: bigint;
 }
 
 export interface SwapRequest {
@@ -30,10 +31,12 @@ export interface SwapRequest {
   deltaAmount: bigint;
   minOutChangeAmount: bigint;
   stakingOutRef?: OutRef;
+  protocolConfigOutRef: OutRef;
 }
 
 export interface QuoteSwapRequest {
   poolOutRef: OutRef;
   deltaAmount: bigint;
   stakingOutRef?: OutRef;
+  protocolConfigOutRef: OutRef;
 }

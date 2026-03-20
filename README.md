@@ -141,11 +141,11 @@ async function main() {
     console.error,
     () => console.log("closed"),
     {
+      // example with demeter
       connection: {
-        address: {
-          http: "YOUR_HTTP_ENDPOINT",
-          webSocket: "YOUR_WS_ENDPOINT",
-        },
+        host: "ogmios1xxxxxxxxxxxx.cardano-preprod-v6.ogmios-m1.dmtr.host",
+        port: 443,
+        tls: true
       },
     }
   );

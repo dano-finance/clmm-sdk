@@ -1,4 +1,4 @@
-import { Network } from "@lucid-evolution/lucid";
+import { Network, OutRef, UTxO } from "@lucid-evolution/lucid";
 import { PoolDatum } from "./datum";
 
 /** @internal */
@@ -19,13 +19,14 @@ export function calculateConcentratedPoolSwap(
   tokenBAmount: bigint,
   datum: PoolDatum,
   deltaAmount: bigint,
-  rewardAmount: bigint = 0n
+  rewardAmount: bigint = 0n,
+  platformFeeRate: bigint
 ): [bigint, bigint] {
   // Constants
   const poolInAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
-  const minADA: bigint = datum.tokenX === "" ? 3_000_000n : 0n;
+  const excludedADA: bigint = datum.tokenX === "" ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
   const activeReserveX =
-    BigInt(tokenAAmount) - BigInt(datum.platformFeeX) + rewardAmount - minADA;
+    BigInt(tokenAAmount) - BigInt(datum.platformFeeX) + rewardAmount - excludedADA;
   const activeReserveY = BigInt(tokenBAmount) - BigInt(datum.platformFeeY);
 
   const liquidity = calcLiquidity(
@@ -50,14 +51,16 @@ export function calculateConcentratedPoolSwap(
       xV,
       yV,
       activeReserveY,
-      BigInt(datum.lpFeeRate)
+      BigInt(datum.lpFeeRate),
+      platformFeeRate
     );
   return getPoolChange(
     poolInAmount,
     yV,
     xV,
     activeReserveX,
-    BigInt(datum.lpFeeRate)
+    BigInt(datum.lpFeeRate),
+    platformFeeRate
   );
 }
 
@@ -67,13 +70,14 @@ const getPoolChange = (
   tokenInVirtual: bigint,
   tokenOutVirtual: bigint,
   tokenOutReal: bigint,
-  lpFeeRate: bigint
+  lpFeeRate: bigint,
+  platformFeeRate: bigint
 ): [bigint, bigint] => {
   const BASE = 10_000n;
 
   // fee calculations
   const lpFee = (amountIn * lpFeeRate) / BASE;
-  const platformFee = (lpFee * 5n) / 100n; // 5%
+  const platformFee = (lpFee * BigInt(platformFeeRate)) / 10_000n;
   const offFee = BASE - lpFeeRate;
 
   // main math
@@ -135,4 +139,18 @@ function ceilDiv(a: bigint, b: bigint): bigint {
 
   // If a and b have the same sign and remainder is non-zero, add 1n
   return r === 0n || a < 0n !== b < 0n ? q : q + 1n;
+}
+
+export function getPoolProtocolConfigIdx(protocolOutRef: OutRef, refInputs: UTxO[]): bigint {
+  const sortedInputs = [...refInputs].sort((a, b) => {
+    if (a.txHash === b.txHash) return a.outputIndex - b.outputIndex;
+    return a.txHash < b.txHash ? -1 : 1;
+  });
+  const idx = sortedInputs.findIndex(
+    (input) => input.txHash === protocolOutRef.txHash && input.outputIndex === protocolOutRef.outputIndex
+  );
+  if (idx === -1) {
+    throw new Error("Protocol config out ref not found in reference inputs");
+  }
+  return BigInt(idx);
 }
