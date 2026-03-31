@@ -5,7 +5,6 @@ export interface MultiAsset {
   assets: Asset[];
 }
 
-/** @internal */
 interface Asset {
   name: string;
   value: bigint;

@@ -1,5 +1,5 @@
 import { OutRef } from "@lucid-evolution/lucid";
-import { MultiAsset } from "./multiAssets";
+import { MultiAsset } from "./multiAssets.js";
 
 export interface ConcentratedPool {
   outRef: string;

@@ -5,7 +5,7 @@ An SDK to calculate and execute swaps on the Danogo liquidity platform on the Ca
 ## Installation
 
 ```bash
-npm install danogo-clmm-sdk
+npm install danogo-clmm
 ```
 
 ## Usage
@@ -19,7 +19,7 @@ This SDK relies on `@lucid-evolution/lucid` for wallet management and transactio
 Initialize the SDK with the Danogo API URL. Optionally, you can provide a custom pool script hash.
 
 ```typescript
-import DanogoSwap from "danogo-clmm-sdk";
+import DanogoSwap from "danogo-clmm";
 
 const sdk = new DanogoSwap();
 ```
@@ -29,7 +29,7 @@ const sdk = new DanogoSwap();
 Calculate the expected output of a swap without submitting a transaction. This is useful for UI previews or checking rates.
 
 ```typescript
-import DanogoSwap from "danogo-clmm-sdk";
+import DanogoSwap from "danogo-clmm";
 import { Lucid, Kupmios } from "@lucid-evolution/lucid";
 
 const sdk = new DanogoSwap();
@@ -51,6 +51,11 @@ async function main() {
         "your_tx_hash",
       outputIndex: 1, // your output index
     },
+    protocolConfigOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 0, // your index
+    },
     deltaAmount: -3000000n,
   };
 
@@ -68,7 +73,7 @@ async function main() {
 Build and submit a swap transaction using a Lucid instance.
 
 ```typescript
-import DanogoSwap from "danogo-clmm-sdk";
+import DanogoSwap from "danogo-clmm";
 import { Lucid, Kupmios } from "@lucid-evolution/lucid";
 
 const sdk = new DanogoSwap();
@@ -87,17 +92,22 @@ async function main() {
     poolOutRef: {
       txHash:
         "your_tx_hash",
-      outputIndex: 0, // your pool output index
+      outputIndex: 0, // your index
     },
     poolScriptOutRef: {
       txHash:
         "your_tx_hash",
-      outputIndex: 0, // your pool script output index
+      outputIndex: 0, // your index
+    },
+    protocolConfigOutRef: {
+      txHash:
+        "your_tx_hash",
+      outputIndex: 0, // your index
     },
     stakingOutRef: {
       txHash:
         "your_tx_hash",
-      outputIndex: 1, // your staking output index
+      outputIndex: 1, // your index
     },
     deltaAmount: -3000000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
     minOutChangeAmount: 10000n, // Minimum amount of token received to accept
@@ -112,7 +122,7 @@ async function main() {
 }
 ```
 
-Note for Kupmios Users: There is currently a known issue with lucid-evolution when using Kupmios for transaction evaluation. If you encounter errors during submission, you may need to manually patch node_modules/@lucid-evolution/provider/dist/index.js node_modules/@lucid-evolution/provider/dist/index.cjs by commenting out the additionalUtxo line in the evaluateTx method: 
+lucid-evolution currently raises an error during transaction evaluation when provider is Kupmios. For now, this SDK is only known to work with Kupmios; other providers are not supported by this workaround. It works if you modify library code in `node_modules/@lucid-evolution/provider/dist/index.js` and `node_modules/@lucid-evolution/provider/dist/index.cjs` by commenting out the `additionalUtxo` line in the `evaluateTx` method:
 ```javascript
  const data = {
       jsonrpc: "2.0",
@@ -131,7 +141,7 @@ Note for Kupmios Users: There is currently a known issue with lucid-evolution wh
 Extract pool data directly from an Ogmios transaction object.
 
 ```typescript
-import DanogoSwap from "danogo-clmm-sdk";
+import DanogoSwap from "danogo-clmm";
 import { createInteractionContext, createChainSynchronizationClient } from "@cardano-ogmios/client";
 
 const sdk = new DanogoSwap();

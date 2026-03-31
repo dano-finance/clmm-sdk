@@ -1,5 +1,5 @@
 import { Network, OutRef, UTxO } from "@lucid-evolution/lucid";
-import { PoolDatum } from "./datum";
+import { PoolDatum } from "./datum.js";
 
 /** @internal */
 export const getEpoch = (t: number, network: Network): number => {
