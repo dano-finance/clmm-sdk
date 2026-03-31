@@ -44,19 +44,19 @@ async function main() {
     poolOutRef: {
       txHash:
         "your_tx_hash",
-      outputIndex: 0, // your output index
+      outputIndex: 0, // your index
     },
     stakingOutRef: {
       txHash:
         "your_tx_hash",
-      outputIndex: 1, // your output index
+      outputIndex: 1, // your index
     },
     protocolConfigOutRef: {
       txHash:
         "your_tx_hash",
       outputIndex: 0, // your index
     },
-    deltaAmount: -3000000n,
+    deltaAmount: -3000000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
   };
 
   try {
@@ -122,21 +122,35 @@ async function main() {
 }
 ```
 
-lucid-evolution currently raises an error during transaction evaluation when provider is Kupmios. For now, this SDK is only known to work with Kupmios; other providers are not supported by this workaround. It works if you modify library code in `node_modules/@lucid-evolution/provider/dist/index.js` and `node_modules/@lucid-evolution/provider/dist/index.cjs` by commenting out the `additionalUtxo` line in the `evaluateTx` method:
+## ⚠️ Provider Compatibility
+
+`lucid-evolution` currently raises an error during transaction evaluation.
+
+This package **only supports the Kupmios provider**.
+
+### Required Patch
+
+Modify the following files:
+
+- `node_modules/@lucid-evolution/provider/dist/index.js`
+- `node_modules/@lucid-evolution/provider/dist/index.cjs`
+
+In the `evaluateTx` method, comment out the `additionalUtxo` line:
+
 ```javascript
- const data = {
-      jsonrpc: "2.0",
-      method: "evaluateTransaction",
-      params: {
-        transaction: { cbor: tx },
-        // additionalUtxo: toOgmiosUTxOs(additionalUTxOs)  // comment here
-      },
-      id: null
-    };
- ```
+const data = {
+  jsonrpc: "2.0",
+  method: "evaluateTransaction",
+  params: {
+    transaction: { cbor: tx },
+    // Comment out the line below:
+    // additionalUtxo: toOgmiosUTxOs(additionalUTxOs)
+  },
+  id: null
+};
+```
 
-
- ### 3. Get Pool Info from Ogmios Transaction
+### 3. Get Pool Info from Ogmios Transaction
 
 Extract pool data directly from an Ogmios transaction object.
 
