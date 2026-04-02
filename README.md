@@ -8,16 +8,33 @@ An SDK to calculate and execute swaps on the Danogo liquidity platform on the Ca
 npm install danogo-clmm
 ```
 
+## Prerequisites
+
+This SDK requires:
+- Node.js 18+
+- `@evolution-sdk/evolution` for wallet management and transaction building
+- A Kupmios provider for blockchain data
+- An Ogmios instance for transaction submission
+
+### ⚠️ TypeScript Compatibility Note
+
+The dependency `@evolution-sdk/evolution` currently ships with some TypeScript type definitions that may cause compilation errors in strict projects.
+
+If you encounter type errors originating from `node_modules/@evolution-sdk/evolution`, you can safely enable the following option in your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "skipLibCheck": true
+  }
+}
+```
+
 ## Usage
-
-### Prerequisites
-
-This SDK relies on `@lucid-evolution/lucid` for wallet management and transaction building.
 
 ### Initialization
 
-Initialize the SDK with the Danogo API URL. Optionally, you can provide a custom pool script hash.
-
+Initialize the SDK.
 ```typescript
 import DanogoSwap from "danogo-clmm";
 
@@ -30,37 +47,43 @@ Calculate the expected output of a swap without submitting a transaction. This i
 
 ```typescript
 import DanogoSwap from "danogo-clmm";
-import { Lucid, Kupmios } from "@lucid-evolution/lucid";
+import { createClient } from "@evolution-sdk/evolution";
 
 const sdk = new DanogoSwap();
 
 async function main() {
-  const lucid = await Lucid(
-    new Kupmios("kupo_url", "ogmios_url"),
-    "Preprod"
-  );
+  const client = createClient({
+    network: "preprod", // your network
+    provider: {
+      type: "kupmios", // recommend kupmios
+      kupoUrl: "your_kupo_url",
+      ogmiosUrl: "your_ogmios_url",
+    },
+    wallet: {
+      type: "seed",
+      mnemonic: "your seed phrase",
+      accountIndex: 0, // your accountIndex
+    },
+  });
 
-  const quoteRequest = {
-    poolOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 0, // your index
-    },
-    stakingOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 1, // your index
-    },
-    protocolConfigOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 0, // your index
-    },
-    deltaAmount: -3000000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
+  const quoteRequest: QuoteSwapRequest = {
+    poolOutRef: new TransactionInput.TransactionInput({
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 0n,
+    }),
+    deltaAmount: -3_000_000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
+    protocolConfigOutRef: new TransactionInput.TransactionInput({
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 0n,
+    }),
+    stakingOutRef: new TransactionInput.TransactionInput({ // if pool contains ADA
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 1n,
+    }),
   };
 
   try {
-    const expectedOutput = await sdk.calculateSwapOut(lucid, quoteRequest);
+    const expectedOutput = await sdk.calculateSwapOut(client, quoteRequest);
     console.log(`Expected output amount: ${expectedOutput}`);
   } catch (error) {
     console.error("Calculation failed", error);
@@ -70,84 +93,58 @@ async function main() {
 
 ### 2. Submit Swap Transaction
 
-Build and submit a swap transaction using a Lucid instance.
+Build and submit a swap transaction using an Evolution client.
 
 ```typescript
 import DanogoSwap from "danogo-clmm";
-import { Lucid, Kupmios } from "@lucid-evolution/lucid";
+import { createClient, TransactionInput, TransactionHash } from "@evolution-sdk/evolution";
 
 const sdk = new DanogoSwap();
 
 async function main() {
-  // 1. Initialize Lucid with your provider (recommend Kupmios)
-  const lucid = await Lucid(
-    new Kupmios("kupo_url", "ogmios_url"),
-    "Preprod"
-  );
-  
-  // 2. Select wallet
-  lucid.selectWallet.fromSeed("your seed phrase");
+  // 1. Initialize client with your provider
+  const client = createClient({
+    network: "preprod", // your network
+    provider: {
+      type: "kupmios", // recommend kupmios
+      kupoUrl: "your_kupo_url",
+      ogmiosUrl: "your_ogmios_url",
+    },
+    wallet: {
+      type: "seed",
+      mnemonic: "your seed phrase",
+      accountIndex: 0, // your accountIndex
+    },
+  });
 
-  const swapRequest = {
-    poolOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 0, // your index
-    },
-    poolScriptOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 0, // your index
-    },
-    protocolConfigOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 0, // your index
-    },
-    stakingOutRef: {
-      txHash:
-        "your_tx_hash",
-      outputIndex: 1, // your index
-    },
-    deltaAmount: -3000000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
+  const swapRequest: SwapRequest = {
+    poolOutRef: new TransactionInput.TransactionInput({
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 0n,
+    }),
+    deltaAmount: -3_000_000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
     minOutChangeAmount: 10000n, // Minimum amount of token received to accept
-  }
+    poolScriptOutRef: new TransactionInput.TransactionInput({
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 0n,
+    }),
+    protocolConfigOutRef: new TransactionInput.TransactionInput({
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 0n,
+    }),
+    stakingOutRef: new TransactionInput.TransactionInput({ // if pool contains ADA
+      transactionId: TransactionHash.fromHex("your_tx_hash"),
+      index: 1n,
+    }),
+  };
 
   try {
-    const txHash = await sdk.submitSwap(lucid, swapRequest);
+    const txHash = await sdk.submitSwap(client, swapRequest);
     console.log(`Transaction submitted: ${txHash}`);
   } catch (error) {
     console.error("Swap failed", error);
   }
 }
-```
-
-## ⚠️ Provider Compatibility
-
-`lucid-evolution` currently raises an error during transaction evaluation.
-
-This package **only supports the Kupmios provider**.
-
-### Required Patch
-
-Modify the following files:
-
-- `node_modules/@lucid-evolution/provider/dist/index.js`
-- `node_modules/@lucid-evolution/provider/dist/index.cjs`
-
-In the `evaluateTx` method, comment out the `additionalUtxo` line:
-
-```javascript
-const data = {
-  jsonrpc: "2.0",
-  method: "evaluateTransaction",
-  params: {
-    transaction: { cbor: tx },
-    // Comment out the line below:
-    // additionalUtxo: toOgmiosUTxOs(additionalUTxOs)
-  },
-  id: null
-};
 ```
 
 ### 3. Get Pool Info from Ogmios Transaction
@@ -156,7 +153,8 @@ Extract pool data directly from an Ogmios transaction object.
 
 ```typescript
 import DanogoSwap from "danogo-clmm";
-import { createInteractionContext, createChainSynchronizationClient } from "@cardano-ogmios/client";
+import { createChainSynchronizationClient, createInteractionContext } from "@cardano-ogmios/client";
+import { Point } from "@cardano-ogmios/schema";
 
 const sdk = new DanogoSwap();
 
@@ -165,9 +163,8 @@ async function main() {
     console.error,
     () => console.log("closed"),
     {
-      // example with demeter
       connection: {
-        host: "ogmios1xxxxxxxxxxxx.cardano-preprod-v6.ogmios-m1.dmtr.host",
+        host: "your_ogmios_host",
         port: 443,
         tls: true
       },
@@ -178,16 +175,15 @@ async function main() {
     rollForward: async ({ block }, requestNext) => {
       if ("transactions" in block) {
         for (const tx of block.transactions!) {
-          const pools = sdk.getPoolsFromOgmiosTx(tx);
-          // your logic here
+          const pools = sdk.getPoolsFromOgmiosTx(tx, "your_pool_script_hash");
+          // your logic with pools
         }
       }
-
       requestNext();
     },
 
     rollBackward: async ({ point }, requestNext) => {
-      // ...
+      // handle rollbacks
       requestNext();
     },
   });

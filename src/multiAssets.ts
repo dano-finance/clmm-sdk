@@ -1,4 +1,5 @@
 import { Value } from "@cardano-ogmios/schema";
+import { AssetName, Bytes, PolicyId } from "@evolution-sdk/evolution";
 
 export interface MultiAsset {
   policyId: string;
@@ -9,8 +10,42 @@ interface Asset {
   name: string;
   value: bigint;
 }
+export interface TokenInfo {
+  policyId?: PolicyId.PolicyId;
+  assetName?: AssetName.AssetName;
+  unit: string;
+}
+
+export function getPolicyIdAssetNameFromUnit(unit: string): TokenInfo {
+  if (unit === "lovelace") {
+    return {
+      unit: "lovelace"
+    };
+  }
+
+  // Parse "policyId.assetName" or "policyId" (empty asset name)
+  const dotIndex = unit.indexOf(".")
+  const policyIdHex = dotIndex === -1 ? unit : unit.slice(0, dotIndex)
+  const assetNameHex = dotIndex === -1 ? "" : unit.slice(dotIndex + 1)
+
+  // Decode policy ID from hex (28 bytes = 56 hex chars)
+  const policyIdBytes = Bytes.fromHex(policyIdHex)
+  const policyId = new PolicyId.PolicyId({ hash: policyIdBytes })
+
+  // Decode asset name from hex (empty string yields empty bytes)
+  const assetNameBytes = assetNameHex ? Bytes.fromHex(assetNameHex) : new Uint8Array(0)
+  const assetName = new AssetName.AssetName({ bytes: assetNameBytes })
+
+  return { policyId, assetName, unit };
+}
 
 /** @internal */
+/**
+ * Builds an array of MultiAsset objects from a Ogmios Value object.
+ * Not use for build tx
+ * @param assets 
+ * @returns 
+ */
 export const buildMultiAssetsFromAssets = (assets: Value): MultiAsset[] => {
   if (!assets || Object.keys(assets).length === 0) {
     return [];

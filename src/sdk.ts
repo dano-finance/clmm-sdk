@@ -1,8 +1,12 @@
 import {
-  LucidEvolution,
-  TxBuilder,
-  validatorToRewardAddress,
-} from "@lucid-evolution/lucid";
+  RewardAccount,
+  RewardAddress,
+  SigningClient,
+} from "@evolution-sdk/evolution";
+import { SigningTransactionBuilder } from "@evolution-sdk/evolution/sdk/builders/TransactionBuilder";
+import { InlineDatum } from "@evolution-sdk/evolution/InlineDatum";
+import { fromScript } from "@evolution-sdk/evolution/ScriptHash";
+import { fromAsset, merge, quantityOf, fromLovelace, addLovelace, subtractLovelace } from "@evolution-sdk/evolution/Assets";
 import { Transaction } from "@cardano-ogmios/schema";
 import { swapTokensRedeemer } from "./redeemer.js";
 import {
@@ -11,7 +15,11 @@ import {
   parseProtocolConfigDatum,
   transformPoolDatum,
 } from "./datum.js";
-import { buildMultiAssetsFromAssets, MultiAsset } from "./multiAssets.js";
+import {
+  buildMultiAssetsFromAssets,
+  getPolicyIdAssetNameFromUnit,
+  MultiAsset,
+} from "./multiAssets.js";
 import {
   ConcentratedPool,
   QuoteSwapRequest,
@@ -40,81 +48,58 @@ class DanogoSwap {
    * @returns A promise that resolves to a `bigint` representing the estimated output token amount.
    */
   async calculateSwapOut(
-    lucid: LucidEvolution,
+    client: SigningClient,
     request: QuoteSwapRequest,
   ): Promise<bigint> {
-    if (!lucid || !lucid.wallet()) {
+    if (!client || !client.address) {
       throw new Error("Please connect a wallet first.");
     }
-    const poolInUtxo = (
-      await lucid.utxosByOutRef([
-        {
-          txHash: request.poolOutRef.txHash,
-          outputIndex: request.poolOutRef.outputIndex,
-        },
-      ])
-    )[0];
+    const networkId = (await client.address()).networkId;
+    const poolInUtxo = (await client.getUtxosByOutRef([request.poolOutRef]))[0];
     let stakingRefUtxo = null;
     if (request.stakingOutRef) {
       stakingRefUtxo = (
-        await lucid.utxosByOutRef([
-          {
-            txHash: request.stakingOutRef.txHash,
-            outputIndex: request.stakingOutRef.outputIndex,
-          },
-        ])
+        await client.getUtxosByOutRef([request.stakingOutRef])
       )[0];
     }
-    if (!poolInUtxo.datum) {
+    if (!poolInUtxo.datumOption) {
       throw new Error("Pool input UTxO does not contain a datum.");
     }
     const protocolConfigUtxo = (
-      await lucid.utxosByOutRef([
-        {
-          txHash: request.protocolConfigOutRef.txHash,
-          outputIndex: request.protocolConfigOutRef.outputIndex,
-        },
-      ])
+      await client.getUtxosByOutRef([request.protocolConfigOutRef])
     )[0];
-    if (!protocolConfigUtxo.datum) {
+    if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
     }
     const protocolConfigDatum = parseProtocolConfigDatum(
-      protocolConfigUtxo.datum,
+      protocolConfigUtxo.datumOption as InlineDatum,
     );
     // 1732
-    const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
-    const tokenA = poolInDatum.tokenX || "lovelace";
-    const tokenB = poolInDatum.tokenY;
+    const poolInDatum: PoolDatum = parseDatum(
+      poolInUtxo.datumOption as InlineDatum,
+    );
+    const tokenA = getPolicyIdAssetNameFromUnit(poolInDatum.tokenX);
+    const tokenB = getPolicyIdAssetNameFromUnit(poolInDatum.tokenY);
     const coin = poolInUtxo.assets.lovelace;
-    const getTokenAmount = (tokenId: string) => {
-      if (tokenId === "lovelace") return coin;
-      for (const [token, quantity] of Object.entries(poolInUtxo.assets)) {
-        if (token === tokenId) return quantity;
-      }
-      return 0n;
+    const getTokenAmount = (token: typeof tokenA) => {
+      if (token.unit === "lovelace") return coin;
+      return quantityOf(poolInUtxo.assets, token.policyId!, token.assetName!);
     };
 
-    let rewardAmount = 0n,
-      stakingRewardAddress = "";
-    if (tokenA == "lovelace") {
-      stakingRewardAddress = validatorToRewardAddress(
-        lucid.config().network!,
-        stakingRefUtxo!.scriptRef!,
-      );
-      try {
-        rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
-      } catch (e) {
-        rewardAmount = 0n;
-      }
-    }
+    const { rewardAmount } = await this.getStakingRewards(
+      client,
+      networkId,
+      stakingRefUtxo,
+      tokenA
+    );
+
     const [tokenToReceiveAmount, _] = calculateConcentratedPoolSwap(
       getTokenAmount(tokenA),
       getTokenAmount(tokenB),
       poolInDatum,
       request.deltaAmount,
       rewardAmount,
-      protocolConfigDatum.platformFeeRate
+      protocolConfigDatum.platformFeeRate,
     );
 
     return tokenToReceiveAmount;
@@ -123,72 +108,50 @@ class DanogoSwap {
   /**
    * Builds and submits a swap transaction to the network.
    *
-   * @param lucid An initialized Lucid instance with a connected wallet.
+   * @param client An initialized SigningClient instance with a connected wallet.
    * @param request The swap request object containing pool reference, swap amount, and minimum output.
    * @returns A promise that resolves to the transaction hash.
    */
   async submitSwap(
-    lucid: LucidEvolution,
+    client: SigningClient,
     request: SwapRequest,
   ): Promise<string> {
-    if (!lucid || !lucid.wallet()) {
+    if (!client || !client.address) {
       throw new Error("Please connect a wallet first.");
     }
-    const poolInUtxo = (
-      await lucid.utxosByOutRef([
-        {
-          txHash: request.poolOutRef.txHash,
-          outputIndex: request.poolOutRef.outputIndex,
-        },
-      ])
-    )[0];
+    const networkId = (await client.address()).networkId;
+    const poolInUtxo = (await client.getUtxosByOutRef([request.poolOutRef]))[0];
     const poolScriptUtxo = (
-      await lucid.utxosByOutRef([
-        {
-          txHash: request.poolScriptOutRef.txHash,
-          outputIndex: request.poolScriptOutRef.outputIndex,
-        },
-      ])
+      await client.getUtxosByOutRef([request.poolScriptOutRef])
     )[0];
     let stakingRefUtxo = null;
     if (request.stakingOutRef) {
       stakingRefUtxo = (
-        await lucid.utxosByOutRef([
-          {
-            txHash: request.stakingOutRef.txHash,
-            outputIndex: request.stakingOutRef.outputIndex,
-          },
-        ])
+        await client.getUtxosByOutRef([request.stakingOutRef])
       )[0];
     }
-    if (!poolInUtxo.datum) {
+    if (!poolInUtxo.datumOption) {
       throw new Error("Pool input UTxO does not contain a datum.");
     }
     const protocolConfigUtxo = (
-      await lucid.utxosByOutRef([
-        {
-          txHash: request.protocolConfigOutRef.txHash,
-          outputIndex: request.protocolConfigOutRef.outputIndex,
-        },
-      ])
+      await client.getUtxosByOutRef([request.protocolConfigOutRef])
     )[0];
-    if (!protocolConfigUtxo.datum) {
+    if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
     }
     const protocolConfigDatum = parseProtocolConfigDatum(
-      protocolConfigUtxo.datum,
+      protocolConfigUtxo.datumOption as InlineDatum,
     );
 
-    const poolInDatum: PoolDatum = parseDatum(poolInUtxo.datum);
-    const tokenA = poolInDatum.tokenX || "lovelace";
-    const tokenB = poolInDatum.tokenY;
+    const poolInDatum: PoolDatum = parseDatum(
+      poolInUtxo.datumOption as InlineDatum,
+    );
+    const tokenA = getPolicyIdAssetNameFromUnit(poolInDatum.tokenX);
+    const tokenB = getPolicyIdAssetNameFromUnit(poolInDatum.tokenY);
     const coin = poolInUtxo.assets.lovelace;
-    const getTokenAmount = (tokenId: string) => {
-      if (tokenId === "lovelace") return coin;
-      for (const [token, quantity] of Object.entries(poolInUtxo.assets)) {
-        if (token === tokenId) return quantity;
-      }
-      return 0n;
+    const getTokenAmount = (token: typeof tokenA) => {
+      if (token.unit === "lovelace") return coin;
+      return quantityOf(poolInUtxo.assets, token.policyId!, token.assetName!);
     };
 
     const deltaAmount = request.deltaAmount;
@@ -196,48 +159,38 @@ class DanogoSwap {
     const tokenOut = deltaAmount > 0 ? tokenB : tokenA;
 
     // Initialize the transaction builder
-    let tx: TxBuilder = lucid.newTx();
+    let tx: SigningTransactionBuilder = client.newTx();
 
     // 1. Check user wallet has enough tokenIn
-    const userUtxos = await lucid.wallet().getUtxos();
-    const totalTokenInBalance = userUtxos.reduce(
-      (acc, utxo) => acc + (utxo.assets[tokenIn] || 0n),
-      0n,
-    );
+    const totalTokenInBalance = await this.getUserTokenBalance(client, tokenIn);
     const requiredAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
     if (totalTokenInBalance < requiredAmount) {
       throw new Error(
-        `Insufficient ${tokenIn} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`,
+        `Insufficient ${tokenIn.unit} balance. Required: ${requiredAmount}, Available: ${totalTokenInBalance}`,
       );
     }
 
     // 3. Add Reference Inputs
-    tx = tx.readFrom([poolScriptUtxo, protocolConfigUtxo]);
+    tx = tx.readFrom({ referenceInputs: [poolScriptUtxo, protocolConfigUtxo] });
     if (stakingRefUtxo) {
-      tx = tx.readFrom([stakingRefUtxo]);
+      tx = tx.readFrom({ referenceInputs: [stakingRefUtxo] });
     }
 
     // 4. Add Outputs
-    let rewardAmount = 0n,
-      stakingRewardAddress = "";
-    if (tokenA == "lovelace") {
-      stakingRewardAddress = validatorToRewardAddress(
-        lucid.config().network!,
-        stakingRefUtxo!.scriptRef!,
-      );
-      try {
-        rewardAmount = (await lucid.delegationAt(stakingRewardAddress)).rewards;
-      } catch (e) {
-        rewardAmount = 0n;
-      }
-    }
+    const { rewardAmount, stakingRewardAddress } = await this.getStakingRewards(
+      client,
+      networkId,
+      stakingRefUtxo,
+      tokenA
+    );
+
     const [tokenToReceiveAmount, platformFee] = calculateConcentratedPoolSwap(
       getTokenAmount(tokenA),
       getTokenAmount(tokenB),
       poolInDatum,
       deltaAmount,
       rewardAmount,
-      protocolConfigDatum.platformFeeRate
+      protocolConfigDatum.platformFeeRate,
     );
     if (tokenToReceiveAmount < request.minOutChangeAmount) {
       throw new Error(
@@ -245,38 +198,40 @@ class DanogoSwap {
       );
     }
 
-    const currentEpoch = getEpoch(Date.now(), lucid.config().network!);
+    const currentEpoch = getEpoch(Date.now(), networkId);
     const transformedDatum = transformPoolDatum({
       ...poolInDatum,
       platformFeeX:
         BigInt(poolInDatum.platformFeeX) +
-        (tokenIn === (poolInDatum.tokenX || "lovelace") ? platformFee : 0n),
+        (tokenIn.unit === tokenA.unit ? platformFee : 0n),
       platformFeeY:
         BigInt(poolInDatum.platformFeeY) +
-        (tokenIn === poolInDatum.tokenY ? platformFee : 0n),
+        (tokenIn.unit === tokenB.unit ? platformFee : 0n),
       lastWithdrawEpoch: currentEpoch,
       totalSwapFee:
         BigInt(poolInDatum.totalSwapFee) + BigInt(protocolConfigDatum.swapFee),
     });
-    const poolOutAssets = { ...poolInUtxo.assets };
-    poolOutAssets[tokenIn] =
-      poolOutAssets[tokenIn] + (deltaAmount > 0n ? deltaAmount : -deltaAmount);
-    poolOutAssets[tokenOut] =
-      BigInt(poolOutAssets[tokenOut]) - BigInt(tokenToReceiveAmount);
-    poolOutAssets.lovelace =
-      BigInt(poolOutAssets.lovelace) + BigInt(protocolConfigDatum.swapFee);
-    tx = tx.pay.ToAddressWithData(
-      poolInUtxo.address,
-      {
-        kind: "inline",
-        value: transformedDatum,
-      },
-      poolOutAssets,
+
+    const deltaAssets = this.buildDeltaAssets(
+      tokenIn,
+      tokenOut,
+      deltaAmount,
+      BigInt(tokenToReceiveAmount),
+      BigInt(protocolConfigDatum.swapFee)
     );
 
+    const poolOutAssets = merge(poolInUtxo.assets, deltaAssets);
+
+    tx = tx.payToAddress({
+      address: poolInUtxo.address,
+      assets: poolOutAssets,
+      datum: transformedDatum,
+    });
+
     // 5. Add Metadata
-    tx = tx.attachMetadata(674, {
-      msg: ["Danogo Liquidity Pair: Swap"],
+    tx = tx.attachMetadata({
+      label: 674n,
+      metadata: new Map([["msg", ["Danogo Liquidity Pair: Swap"]]]),
     });
 
     // 6. Add spend & withdrawal
@@ -288,38 +243,53 @@ class DanogoSwap {
       protocolConfigUtxo,
       referenceInputs,
     );
-    tx = tx.collectFrom(
-      [poolInUtxo],
-      swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, false),
-    );
-    tx = tx.withdraw(
-      validatorToRewardAddress(
-        lucid.config().network!,
-        poolScriptUtxo.scriptRef!,
+    tx = tx.collectFrom({
+      inputs: [poolInUtxo],
+      redeemer: swapTokensRedeemer(
+        [poolInUtxo],
+        [deltaAmount],
+        protocolConfigIdx,
+        false,
       ),
-      0n,
-      swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, true),
-    );
+    });
+    tx = tx.withdraw({
+      stakeCredential: fromScript(poolScriptUtxo.scriptRef!),
+      amount: 0n,
+      redeemer: swapTokensRedeemer(
+          [poolInUtxo],
+          [deltaAmount],
+          protocolConfigIdx,
+          true,
+        ),
+    });
     // if tokenX is ADA
-    if (tokenA === "lovelace" && currentEpoch > poolInDatum.lastWithdrawEpoch)
-      tx = tx.withdraw(
-        stakingRewardAddress,
-        rewardAmount,
-        swapTokensRedeemer([poolInUtxo], [deltaAmount], protocolConfigIdx, false),
-      );
+    if (
+      tokenA.unit === "lovelace" &&
+      currentEpoch > poolInDatum.lastWithdrawEpoch &&
+      stakingRewardAddress
+    )
+      tx = tx.withdraw({
+        stakeCredential: fromScript(stakingRefUtxo!.scriptRef!),
+        amount: rewardAmount,
+        redeemer: swapTokensRedeemer(
+          [poolInUtxo],
+          [deltaAmount],
+          protocolConfigIdx,
+          false,
+        ),
+      });
 
     // 7. Finalize and Submit
-    tx = tx
-      .validFrom(Date.now() - 120000)
-      .validTo(Date.now() + 240000)
-      .setMinFee(17000n)
-      .addSigner(await lucid.wallet().address());
-
-    const builtTx = await tx.complete({
-      localUPLCEval: false,
+    tx.setValidity({
+      from: BigInt(Date.now() - 120000),
+      to: BigInt(Date.now() + 240000),
     });
-    const signedTx = await builtTx.sign.withWallet().complete();
-    return await signedTx.submit();
+
+    const builtTx = await tx.build({
+      debug: true,
+    });
+    const signedTx = await (await builtTx.sign()).submit();
+    return signedTx.toString();
   }
 
   /**
@@ -334,7 +304,7 @@ class DanogoSwap {
    */
   getPoolsFromOgmiosTx(
     tx: Transaction,
-    poolScriptHash: string
+    poolScriptHash: string,
   ): ConcentratedPool[] {
     const concentratedPools: ConcentratedPool[] = [];
 
@@ -388,7 +358,7 @@ class DanogoSwap {
               minBChange: datum.minYChange,
               lpTokenTotalSupply: datum.circulatingLPToken,
               lastWithdrawEpoch: datum.lastWithdrawEpoch,
-              totalSwapFee: datum.totalSwapFee
+              totalSwapFee: datum.totalSwapFee,
             });
           }
         }
@@ -396,7 +366,79 @@ class DanogoSwap {
     });
     return concentratedPools;
   }
+
+  /**
+   * Helper function to get the balance of a specific token from user UTXOs
+   */
+  private async getUserTokenBalance(
+    client: SigningClient,
+    token: { unit: string; policyId?: any; assetName?: any }
+  ): Promise<bigint> {
+    const userUtxos = await client.getWalletUtxos();
+    return userUtxos.reduce(
+      (acc, utxo) =>
+        acc +
+        (token.unit === "lovelace"
+          ? utxo.assets.lovelace
+          : (quantityOf(utxo.assets, token.policyId, token.assetName) || 0n)),
+      0n
+    );
+  }
+
+  /**
+   * Helper function to build delta assets for pool updates
+   */
+  private buildDeltaAssets(
+    tokenIn: { unit: string; policyId?: any; assetName?: any },
+    tokenOut: { unit: string; policyId?: any; assetName?: any },
+    deltaAmount: bigint,
+    tokenToReceiveAmount: bigint,
+    swapFee: bigint
+  ): any {
+    // Input amount (including swap fee)
+    const inputAmount = deltaAmount > 0n ? deltaAmount : -deltaAmount;
+    let deltaAssets: any;
+
+    if (tokenIn.unit === "lovelace") {
+      deltaAssets = fromLovelace(inputAmount + swapFee);
+    } else {
+      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, inputAmount, swapFee);
+    }
+
+    // Output amount
+    if (tokenOut.unit === "lovelace") {
+      deltaAssets = subtractLovelace(deltaAssets, tokenToReceiveAmount);
+    } else {
+      const outputAssets = fromAsset(tokenOut.policyId, tokenOut.assetName, -tokenToReceiveAmount);
+      deltaAssets = merge(deltaAssets, outputAssets);
+    }
+
+    return deltaAssets;
+  }
+
+  /**
+   * Helper function to handle staking rewards for ADA pools
+   */
+  private async getStakingRewards(
+    client: SigningClient,
+    networkId: number,
+    stakingRefUtxo: any,
+    tokenA: { unit: string }
+  ): Promise<{ rewardAmount: bigint; stakingRewardAddress?: RewardAddress.RewardAddress }> {
+    if (tokenA.unit !== "lovelace") {
+      return { rewardAmount: 0n };
+    }
+
+    const stakingAccount = new RewardAccount.RewardAccount({
+      networkId,
+      stakeCredential: fromScript(stakingRefUtxo.scriptRef!),
+    });
+    const stakingRewardAddress = RewardAccount.toBech32(stakingAccount) as RewardAddress.RewardAddress;
+    const rewardAmount = (await client.getDelegation(stakingRewardAddress)).rewards;
+
+    return { rewardAmount, stakingRewardAddress };
+  }
 }
 
 export default DanogoSwap;
-export { ConcentratedPool, PoolDatum, SwapRequest };
+export { ConcentratedPool, PoolDatum, SwapRequest, QuoteSwapRequest };

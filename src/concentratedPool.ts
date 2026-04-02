@@ -1,4 +1,4 @@
-import { OutRef } from "@lucid-evolution/lucid";
+import { TransactionInput } from "@evolution-sdk/evolution";
 import { MultiAsset } from "./multiAssets.js";
 
 export interface ConcentratedPool {
@@ -26,17 +26,17 @@ export interface ConcentratedPool {
 }
 
 export interface SwapRequest {
-  poolOutRef: OutRef;
-  poolScriptOutRef: OutRef;
+  poolOutRef: TransactionInput.TransactionInput;
+  poolScriptOutRef: TransactionInput.TransactionInput;
   deltaAmount: bigint;
   minOutChangeAmount: bigint;
-  stakingOutRef?: OutRef;
-  protocolConfigOutRef: OutRef;
+  stakingOutRef?: TransactionInput.TransactionInput;
+  protocolConfigOutRef: TransactionInput.TransactionInput;
 }
 
 export interface QuoteSwapRequest {
-  poolOutRef: OutRef;
+  poolOutRef: TransactionInput.TransactionInput;
   deltaAmount: bigint;
-  stakingOutRef?: OutRef;
-  protocolConfigOutRef: OutRef;
+  stakingOutRef?: TransactionInput.TransactionInput;
+  protocolConfigOutRef: TransactionInput.TransactionInput;
 }

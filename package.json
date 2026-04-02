@@ -1,22 +1,31 @@
 {
   "name": "danogo-clmm",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "description": "An SDK to calculate and execute swaps on the Danogo liquidity platform.",
   "main": "./dist/sdk.js",
   "module": "./dist/sdk.mjs",
   "types": "./dist/sdk.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/sdk.mjs",
+      "require": "./dist/sdk.js"
+    }
+  },
   "files": [
     "dist",
     "README.md"
   ],
   "keywords": [
     "cardano",
-    "danogo",
+    "dano-finance",
     "swap",
     "clmm"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dano-finance/clmm-sdk"
+  },
   "scripts": {
-    "start": "tsc && node dist/main.js",
     "build": "tsup src/sdk.ts --format cjs,esm --dts --minify --clean --no-splitting",
     "prepublishOnly": "npm run build"
   },
@@ -24,16 +33,12 @@
     "access": "public"
   },
   "dependencies": {
-    "@lucid-evolution/lucid": "0.4.29",
-    "axios": "^1.13.2",
-    "cbor": "^10.0.11"
+    "@cardano-ogmios/client": "^6.14.0",
+    "@cardano-ogmios/schema": "^6.14.0",
+    "@evolution-sdk/evolution": "^0.3.31"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
-  },
-  "peerDependencies": {
-    "@lucid-evolution/lucid": "0.4.29"
   }
 }

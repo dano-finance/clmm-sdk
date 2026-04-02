@@ -1,12 +1,12 @@
-import { Network, OutRef, UTxO } from "@lucid-evolution/lucid";
+import { Network, NetworkId, TransactionInput, UTxO } from "@evolution-sdk/evolution";
 import { PoolDatum } from "./datum.js";
 
 /** @internal */
-export const getEpoch = (t: number, network: Network): number => {
+export const getEpoch = (t: number, network: NetworkId.NetworkId): number => {
   let epochLength = 432000000;
   const epochBoundary = 1647899091000;
   const epochBoundaryAsEpoch = 328;
-  if (network !== "Mainnet") {
+  if (network !== 1) {
     epochLength = 1800000;
   }
 
@@ -24,7 +24,7 @@ export function calculateConcentratedPoolSwap(
 ): [bigint, bigint] {
   // Constants
   const poolInAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
-  const excludedADA: bigint = datum.tokenX === "" ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
+  const excludedADA: bigint = datum.tokenX === "lovelace" ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
   const activeReserveX =
     BigInt(tokenAAmount) - BigInt(datum.platformFeeX) + rewardAmount - excludedADA;
   const activeReserveY = BigInt(tokenBAmount) - BigInt(datum.platformFeeY);
@@ -141,13 +141,14 @@ function ceilDiv(a: bigint, b: bigint): bigint {
   return r === 0n || a < 0n !== b < 0n ? q : q + 1n;
 }
 
-export function getPoolProtocolConfigIdx(protocolOutRef: OutRef, refInputs: UTxO[]): bigint {
-  const sortedInputs = [...refInputs].sort((a, b) => {
-    if (a.txHash === b.txHash) return a.outputIndex - b.outputIndex;
-    return a.txHash < b.txHash ? -1 : 1;
+/** @internal */
+export function getPoolProtocolConfigIdx(protocolConfigUTxO: UTxO.UTxO, refInputs: UTxO.UTxO[]): bigint {
+  const sortedInputs = [...refInputs].sort((a: UTxO.UTxO, b: UTxO.UTxO) => {
+    if (a.transactionId === b.transactionId) return a.index < b.index ? -1 : 1;
+    return a.transactionId < b.transactionId ? -1 : 1;
   });
   const idx = sortedInputs.findIndex(
-    (input) => input.txHash === protocolOutRef.txHash && input.outputIndex === protocolOutRef.outputIndex
+    (input) => input.transactionId === protocolConfigUTxO.transactionId && input.index === protocolConfigUTxO.index
   );
   if (idx === -1) {
     throw new Error("Protocol config out ref not found in reference inputs");

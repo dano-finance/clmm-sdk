@@ -1,4 +1,6 @@
-import { RedeemerBuilder, UTxO } from "@lucid-evolution/lucid";
+import { Data, UTxO } from "@evolution-sdk/evolution";
+import type { IndexedInput } from "@evolution-sdk/evolution/sdk/builders/RedeemerBuilder";
+import { RedeemerArg } from "@evolution-sdk/evolution/sdk/builders/RedeemerBuilder";
 
 /**
  * Converts a BigInt to a big-endian byte array (Uint8Array) of a specific length.
@@ -31,43 +33,60 @@ export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
 }
 
 /** @internal */
-export const swapTokensRedeemer = (poolInUtxos: UTxO[], deltaAmounts: bigint[], protocolConfigIdx: bigint, isWithdrawZero: boolean) => {
+export const swapTokensRedeemer = (
+  poolInUtxos: UTxO.UTxO[],
+  deltaAmounts: bigint[],
+  protocolConfigIdx: bigint,
+  isWithdrawZero: boolean,
+): RedeemerArg => {
   try {
-    // currently, only support one pool in -> one pool out
-    const redeemer: RedeemerBuilder = {
-      kind: "selected",
-      inputs: poolInUtxos,
+    // currently only supports one pool in -> one pool out
+    const buildRedeemerData = (inputIndex: bigint): Data.Data => {
+      const SWAP_ACTION = 3n;
+      const firstBytes = bigintToBytesPadded(
+        isWithdrawZero ? protocolConfigIdx : inputIndex,
+        1,
+      );
+      const poolInBytes = bigintToBytesPadded(inputIndex, 1);
+      const actionBytes = bigintToBytesPadded(SWAP_ACTION, 1);
+      const poolOutBytes = bigintToBytesPadded(0n, 1); // only one pool out
+      const amountBytes = bigintToBytesPadded(deltaAmounts[0], 32); // swap 1 pool -> 1 deltaAmount
 
-      makeRedeemer: (inputIdxs: bigint[]) => {
-        const SWAP_ACTION = 3n
-        // Convert each number to a byte array of a specific, padded length
-        const firstBytes = bigintToBytesPadded(isWithdrawZero ? protocolConfigIdx : inputIdxs[0], 1);
-        const poolInBytes = bigintToBytesPadded(inputIdxs[0], 1);
-        const actionBytes = bigintToBytesPadded(SWAP_ACTION, 1);
-        const poolOutBytes = bigintToBytesPadded(0n, 1); // has only one pool out, already make sure put pool out is the first element
-        const amountBytes = bigintToBytesPadded(deltaAmounts[0], 32); // swap 1 pool -> 1 deltaAmount
+      const totalLength =
+        firstBytes.length +
+        actionBytes.length +
+        poolInBytes.length +
+        poolOutBytes.length +
+        amountBytes.length;
+      const concatenatedBytes = new Uint8Array(totalLength);
 
-        // Create a new Uint8Array to hold the concatenated bytes
-        const totalLength = firstBytes.length + actionBytes.length + poolInBytes.length + poolOutBytes.length + amountBytes.length;
-        const concatenatedBytes = new Uint8Array(totalLength);
+      let pos = 0;
+      concatenatedBytes.set(firstBytes, pos);
+      pos += firstBytes.length;
+      concatenatedBytes.set(actionBytes, pos);
+      pos += actionBytes.length;
+      concatenatedBytes.set(poolInBytes, pos);
+      pos += poolInBytes.length;
+      concatenatedBytes.set(poolOutBytes, pos);
+      pos += poolOutBytes.length;
+      concatenatedBytes.set(amountBytes, pos);
 
-        // Copy the bytes from each part into the final array
-        let pos = 0;
-        concatenatedBytes.set(firstBytes, pos);
-        pos += firstBytes.length;
-        concatenatedBytes.set(actionBytes, pos);
-        pos += actionBytes.length;
-        concatenatedBytes.set(poolInBytes, pos);
-        pos += poolInBytes.length;
-        concatenatedBytes.set(poolOutBytes, pos);
-        pos += poolOutBytes.length;
-        concatenatedBytes.set(amountBytes, pos);
-        // Convert the Uint8Array to a hex string, which Data.to expects for bytestrings.
-        const redeemerAsHex = Buffer.from(concatenatedBytes).toString("hex");
-        return "5824" + redeemerAsHex; // 5824 specify for 36 bytes of redeemer
-      },
+      const redeemerAsHex = Buffer.from(concatenatedBytes).toString("hex");
+      // 5824 is CBOR byte string prefix for 36 bytes.
+      return Data.fromCBORHex("5824" + redeemerAsHex);
     };
-    return redeemer;
+
+    return {
+      all: (indexedInputs: ReadonlyArray<IndexedInput>) => {
+        if (!indexedInputs.length) {
+          throw new Error("swapTokensRedeemer batch all called with empty indexedInputs");
+        }
+
+        const inputIndex = BigInt(indexedInputs[0].index);
+        return buildRedeemerData(inputIndex);
+      },
+      inputs: poolInUtxos,
+    };
   } catch (error) {
     console.error("Error creating pool redeemer:", error);
     throw error;
