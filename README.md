@@ -16,20 +16,6 @@ This SDK requires:
 - A Kupmios provider for blockchain data
 - An Ogmios instance for transaction submission
 
-### ⚠️ TypeScript Compatibility Note
-
-The dependency `@evolution-sdk/evolution` currently ships with some TypeScript type definitions that may cause compilation errors in strict projects.
-
-If you encounter type errors originating from `node_modules/@evolution-sdk/evolution`, you can safely enable the following option in your `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "skipLibCheck": true
-  }
-}
-```
-
 ## Usage
 
 ### Initialization
@@ -43,111 +29,54 @@ const sdk = new DanogoSwap();
 
 ### 1. Calculate Swap Output (Quote)
 
-Calculate the expected output of a swap without submitting a transaction. This is useful for UI previews or checking rates.
+Calculate the expected output of a swap without submitting a transaction. You can swap through one or more pools to get better price execution.
 
+#### Examples
 ```typescript
-import DanogoSwap from "danogo-clmm";
-import { createClient } from "@evolution-sdk/evolution";
-
-const sdk = new DanogoSwap();
-
-async function main() {
-  const client = createClient({
-    network: "preprod", // your network
-    provider: {
-      type: "kupmios", // recommend kupmios
-      kupoUrl: "your_kupo_url",
-      ogmiosUrl: "your_ogmios_url",
+const quote = await sdk.calculateSwapOut(client, {
+  pools: [
+    {
+      poolOutRef: pool1OutRef,
+      deltaAmount: 500_000n,
+      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in an epoch
     },
-    wallet: {
-      type: "seed",
-      mnemonic: "your seed phrase",
-      accountIndex: 0, // your accountIndex
-    },
-  });
-
-  const quoteRequest: QuoteSwapRequest = {
-    poolOutRef: new TransactionInput.TransactionInput({
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 0n,
-    }),
-    deltaAmount: -3_000_000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
-    protocolConfigOutRef: new TransactionInput.TransactionInput({
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 0n,
-    }),
-    stakingOutRef: new TransactionInput.TransactionInput({ // if pool contains ADA
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 1n,
-    }),
-  };
-
-  try {
-    const expectedOutput = await sdk.calculateSwapOut(client, quoteRequest);
-    console.log(`Expected output amount: ${expectedOutput}`);
-  } catch (error) {
-    console.error("Calculation failed", error);
-  }
-}
+    {
+      poolOutRef: pool2OutRef,
+      deltaAmount: 500_000n,
+      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in an epoch
+    }
+  ]
+});
 ```
 
 ### 2. Submit Swap Transaction
 
-Build and submit a swap transaction using an Evolution client.
+Build and submit a swap transaction across one or more pools.
 
+#### Examples
 ```typescript
-import DanogoSwap from "danogo-clmm";
-import { createClient, TransactionInput, TransactionHash } from "@evolution-sdk/evolution";
-
-const sdk = new DanogoSwap();
-
-async function main() {
-  // 1. Initialize client with your provider
-  const client = createClient({
-    network: "preprod", // your network
-    provider: {
-      type: "kupmios", // recommend kupmios
-      kupoUrl: "your_kupo_url",
-      ogmiosUrl: "your_ogmios_url",
+const txHash = await sdk.submitSwap(client, {
+  pools: [
+    {
+      poolOutRef: pool1OutRef,
+      deltaAmount: 500_000n,
+      minOutChangeAmount: 450_000n,
+      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in an epoch
     },
-    wallet: {
-      type: "seed",
-      mnemonic: "your seed phrase",
-      accountIndex: 0, // your accountIndex
-    },
-  });
-
-  const swapRequest: SwapRequest = {
-    poolOutRef: new TransactionInput.TransactionInput({
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 0n,
-    }),
-    deltaAmount: -3_000_000n, // Positive: User sells X -> Buy Y, Negative: User sells Y -> Buy X
-    minOutChangeAmount: 10000n, // Minimum amount of token received to accept
-    poolScriptOutRef: new TransactionInput.TransactionInput({
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 0n,
-    }),
-    protocolConfigOutRef: new TransactionInput.TransactionInput({
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 0n,
-    }),
-    stakingOutRef: new TransactionInput.TransactionInput({ // if pool contains ADA
-      transactionId: TransactionHash.fromHex("your_tx_hash"),
-      index: 1n,
-    }),
-  };
-
-  try {
-    const txHash = await sdk.submitSwap(client, swapRequest);
-    console.log(`Transaction submitted: ${txHash}`);
-  } catch (error) {
-    console.error("Swap failed", error);
-  }
-}
+    {
+      poolOutRef: pool2OutRef,
+      deltaAmount: 500_000n,
+      minOutChangeAmount: 450_000n,
+      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in an epoch
+    }
+  ],
+  protocolConfigOutRef: protocolConfigRef
+});
 ```
 
-### 3. Get Pool Info from Ogmios Transaction
+> `protocolConfigOutRef` is optional and defaults to the SDK's internal constants. In rare cases where the protocol configuration has updated but the SDK has not yet been updated, you can manually provide the latest `protocolConfigOutRef` in your request. Refer to `src/constants.ts` for the constants.
+
+### 4. Get Pool Info from Ogmios Transaction
 
 Extract pool data directly from an Ogmios transaction object.
 
@@ -175,7 +104,8 @@ async function main() {
     rollForward: async ({ block }, requestNext) => {
       if ("transactions" in block) {
         for (const tx of block.transactions!) {
-          const pools = sdk.getPoolsFromOgmiosTx(tx, "your_pool_script_hash");
+          const networkId = 0; // 0 for Preprod, 1 for Mainnet
+          const pools = sdk.getPoolsFromOgmiosTx(tx, networkId);
           // your logic with pools
         }
       }
@@ -194,5 +124,19 @@ async function main() {
   };
 
   await client.resume([checkpoint]);
+}
+```
+
+### ⚠️ TypeScript Compatibility Note
+
+The dependency `@evolution-sdk/evolution` currently ships with some TypeScript type definitions that may cause compilation errors in strict projects.
+
+If you encounter type errors originating from `node_modules/@evolution-sdk/evolution`, you can safely enable the following option in your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "skipLibCheck": true
+  }
 }
 ```

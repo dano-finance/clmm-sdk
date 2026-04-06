@@ -25,18 +25,23 @@ export interface ConcentratedPool {
   totalSwapFee: bigint;
 }
 
+
 export interface SwapRequest {
-  poolOutRef: TransactionInput.TransactionInput;
-  poolScriptOutRef: TransactionInput.TransactionInput;
-  deltaAmount: bigint;
-  minOutChangeAmount: bigint;
-  stakingOutRef?: TransactionInput.TransactionInput;
-  protocolConfigOutRef: TransactionInput.TransactionInput;
+  pools: {
+    poolOutRef: TransactionInput.TransactionInput;
+    deltaAmount: bigint;
+    minOutChangeAmount: bigint;
+    stakingOutRef?: TransactionInput.TransactionInput;
+  }[];
+  protocolConfigOutRef?: TransactionInput.TransactionInput;
 }
 
+
 export interface QuoteSwapRequest {
-  poolOutRef: TransactionInput.TransactionInput;
-  deltaAmount: bigint;
-  stakingOutRef?: TransactionInput.TransactionInput;
-  protocolConfigOutRef: TransactionInput.TransactionInput;
+  pools: {
+    poolOutRef: TransactionInput.TransactionInput;
+    deltaAmount: bigint;
+    stakingOutRef?: TransactionInput.TransactionInput;
+  }[];
+  protocolConfigOutRef?: TransactionInput.TransactionInput;
 }

@@ -1,5 +1,6 @@
 import { Data, CBOR } from "@evolution-sdk/evolution";
 import { InlineDatum } from "@evolution-sdk/evolution/InlineDatum";
+import { ADA_UNIT } from "./constants";
 
 export interface PoolDatum {
   tokenX: string;
@@ -131,7 +132,7 @@ export const parseDatum = (datumHex: string | InlineDatum): PoolDatum => {
       const policyIdHex = Buffer.from(policyId).toString("hex");
       const assetNameHex = Buffer.from(assetName).toString("hex");
       if (policyIdHex === "" && assetNameHex === "") {
-        return "lovelace";
+        return ADA_UNIT;
       }
       return policyIdHex + "." + assetNameHex;
     }

@@ -1,5 +1,6 @@
 import { Value } from "@cardano-ogmios/schema";
 import { AssetName, Bytes, PolicyId } from "@evolution-sdk/evolution";
+import { ADA_UNIT } from "./constants";
 
 export interface MultiAsset {
   policyId: string;
@@ -17,9 +18,9 @@ export interface TokenInfo {
 }
 
 export function getPolicyIdAssetNameFromUnit(unit: string): TokenInfo {
-  if (unit === "lovelace") {
+  if (unit === ADA_UNIT) {
     return {
-      unit: "lovelace"
+      unit: ADA_UNIT
     };
   }
 

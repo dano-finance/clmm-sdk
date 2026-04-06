@@ -1,13 +1,14 @@
-import { Network, NetworkId, TransactionInput, UTxO } from "@evolution-sdk/evolution";
+import { NetworkId, UTxO } from "@evolution-sdk/evolution";
 import { PoolDatum } from "./datum.js";
+import { ADA_UNIT, EPOCH_LENGTH_MAINNET, EPOCH_LENGTH_PREPROD } from "./constants.js";
 
 /** @internal */
 export const getEpoch = (t: number, network: NetworkId.NetworkId): number => {
-  let epochLength = 432000000;
+  let epochLength = EPOCH_LENGTH_MAINNET;
   const epochBoundary = 1647899091000;
   const epochBoundaryAsEpoch = 328;
   if (network !== 1) {
-    epochLength = 1800000;
+    epochLength = EPOCH_LENGTH_PREPROD;
   }
 
   return Math.floor((t - epochBoundary) / epochLength) + epochBoundaryAsEpoch;
@@ -24,7 +25,7 @@ export function calculateConcentratedPoolSwap(
 ): [bigint, bigint] {
   // Constants
   const poolInAmount = deltaAmount < 0n ? -deltaAmount : deltaAmount;
-  const excludedADA: bigint = datum.tokenX === "lovelace" ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
+  const excludedADA: bigint = datum.tokenX === ADA_UNIT ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
   const activeReserveX =
     BigInt(tokenAAmount) - BigInt(datum.platformFeeX) + rewardAmount - excludedADA;
   const activeReserveY = BigInt(tokenBAmount) - BigInt(datum.platformFeeY);
@@ -154,4 +155,43 @@ export function getPoolProtocolConfigIdx(protocolConfigUTxO: UTxO.UTxO, refInput
     throw new Error("Protocol config out ref not found in reference inputs");
   }
   return BigInt(idx);
+}
+
+/** @internal */
+export function calculateMultiPoolSwap(
+  pools: Array<{
+    tokenAAmount: bigint;
+    tokenBAmount: bigint;
+    datum: PoolDatum;
+    rewardAmount?: bigint;
+  }>,
+  deltaAmounts: bigint[],
+  platformFeeRate: bigint
+): Array<{ poolIndex: number; deltaAmount: bigint; outputAmount: bigint; platformFee: bigint }> {
+  const results: Array<{ poolIndex: number; deltaAmount: bigint; outputAmount: bigint; platformFee: bigint }> = [];
+
+  for (let i = 0; i < pools.length; i++) {
+    const pool = pools[i];
+    const deltaAmount = deltaAmounts[i];
+
+    if (deltaAmount === 0n) continue;
+
+    const [outputAmount, platformFee] = calculateConcentratedPoolSwap(
+      pool.tokenAAmount,
+      pool.tokenBAmount,
+      pool.datum,
+      deltaAmount,
+      pool.rewardAmount || 0n,
+      platformFeeRate
+    );
+
+    results.push({
+      poolIndex: i,
+      deltaAmount,
+      outputAmount,
+      platformFee
+    });
+  }
+
+  return results;
 }

@@ -16,11 +16,11 @@ export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
 
   let hex = unSignNum.toString(16);
   if (hex.length % 2) hex = "0" + hex;
-  
+
   const numBytes = hex.length / 2;
   if (numBytes > length) {
     throw new Error(
-      `Number ${n} requires ${numBytes} bytes, but target length is ${length}.`
+      `Number ${n} requires ${numBytes} bytes, but target length is ${length}.`,
     );
   }
 
@@ -34,30 +34,48 @@ export function bigintToBytesPadded(n: bigint, length: number): Uint8Array {
 
 /** @internal */
 export const swapTokensRedeemer = (
-  poolInUtxos: UTxO.UTxO[],
+  targetPoolUTxO: UTxO.UTxO | null,
+  poolInUTxOs: UTxO.UTxO[],
   deltaAmounts: bigint[],
   protocolConfigIdx: bigint,
-  isWithdrawZero: boolean,
 ): RedeemerArg => {
   try {
-    // currently only supports one pool in -> one pool out
-    const buildRedeemerData = (inputIndex: bigint): Data.Data => {
+    // Supports multi-pool vector: (pool_in, pool_out, amount)+
+    const buildRedeemerData = (
+      indexedTargetPoolIndex: bigint | null,
+      indexedInputs: ReadonlyArray<IndexedInput>,
+    ): Data.Data => {
       const SWAP_ACTION = 3n;
       const firstBytes = bigintToBytesPadded(
-        isWithdrawZero ? protocolConfigIdx : inputIndex,
+        targetPoolUTxO ? indexedTargetPoolIndex : protocolConfigIdx,
         1,
       );
-      const poolInBytes = bigintToBytesPadded(inputIndex, 1);
       const actionBytes = bigintToBytesPadded(SWAP_ACTION, 1);
-      const poolOutBytes = bigintToBytesPadded(0n, 1); // only one pool out
-      const amountBytes = bigintToBytesPadded(deltaAmounts[0], 32); // swap 1 pool -> 1 deltaAmount
 
-      const totalLength =
-        firstBytes.length +
-        actionBytes.length +
-        poolInBytes.length +
-        poolOutBytes.length +
-        amountBytes.length;
+      const poolEntries = poolInUTxOs.map((poolUtxo, poolOutIdx) => {
+        // Find this pool UTxO's index in indexedInputs
+        const indexedInput = indexedInputs.find(
+          (input) =>
+            input.utxo.transactionId === poolUtxo.transactionId &&
+            input.utxo.index === poolUtxo.index,
+        );
+        if (!indexedInput) {
+          throw new Error(
+            `Pool UTxO at ${poolOutIdx} not found in indexedInputs`,
+          );
+        }
+        if (deltaAmounts[poolOutIdx] === undefined)
+          throw new Error(
+            `deltaAmount for poolOutIdx ${poolOutIdx} is undefined`,
+          );
+        const poolInBytes = bigintToBytesPadded(BigInt(indexedInput.index), 1);
+        const poolOutBytes = bigintToBytesPadded(BigInt(poolOutIdx), 1);
+        const amountBytes = bigintToBytesPadded(deltaAmounts[poolOutIdx], 32);
+        return { poolInBytes, poolOutBytes, amountBytes };
+      });
+
+      // 1 byte for firstBytes, 1 byte for actionBytes, 34 bytes for each pool entry (poolIn, poolOut, amount)
+      const totalLength = 2 + 34 * poolEntries.length;
       const concatenatedBytes = new Uint8Array(totalLength);
 
       let pos = 0;
@@ -65,27 +83,40 @@ export const swapTokensRedeemer = (
       pos += firstBytes.length;
       concatenatedBytes.set(actionBytes, pos);
       pos += actionBytes.length;
-      concatenatedBytes.set(poolInBytes, pos);
-      pos += poolInBytes.length;
-      concatenatedBytes.set(poolOutBytes, pos);
-      pos += poolOutBytes.length;
-      concatenatedBytes.set(amountBytes, pos);
 
-      const redeemerAsHex = Buffer.from(concatenatedBytes).toString("hex");
-      // 5824 is CBOR byte string prefix for 36 bytes.
-      return Data.fromCBORHex("5824" + redeemerAsHex);
+      for (const entry of poolEntries) {
+        concatenatedBytes.set(entry.poolInBytes, pos);
+        pos += entry.poolInBytes.length;
+        concatenatedBytes.set(entry.poolOutBytes, pos);
+        pos += entry.poolOutBytes.length;
+        concatenatedBytes.set(entry.amountBytes, pos);
+        pos += entry.amountBytes.length;
+      }
+
+      return concatenatedBytes;
     };
 
     return {
       all: (indexedInputs: ReadonlyArray<IndexedInput>) => {
         if (!indexedInputs.length) {
-          throw new Error("swapTokensRedeemer batch all called with empty indexedInputs");
+          throw new Error(
+            "swapTokensRedeemer batch all called with empty indexedInputs",
+          );
         }
-
-        const inputIndex = BigInt(indexedInputs[0].index);
-        return buildRedeemerData(inputIndex);
+        let indexedTargetPool = null;
+        if (targetPoolUTxO) {
+          indexedTargetPool = indexedInputs.find(
+            (poolUtxo) =>
+              poolUtxo.utxo.transactionId === targetPoolUTxO.transactionId &&
+              poolUtxo.utxo.index === targetPoolUTxO.index,
+          );
+          if (!indexedTargetPool) {
+            throw new Error("Target pool UTxO is not found in poolInUTxOs");
+          }
+        }
+        return buildRedeemerData(indexedTargetPool?.index, indexedInputs);
       },
-      inputs: poolInUtxos,
+      inputs: poolInUTxOs,
     };
   } catch (error) {
     console.error("Error creating pool redeemer:", error);
