@@ -14,6 +14,7 @@ This SDK requires:
 - Node.js 18+
 - `@evolution-sdk/evolution` version `0.32.2` for wallet management and transaction building
 - A Kupmios provider for blockchain data and transaction submission
+- Support network: Preprod & Mainnet
 
 ## Usage
 
@@ -46,14 +47,14 @@ Calculate the expected output of a swap without submitting a transaction. You ca
 const quote = await danogoClmm.calculateSwapOut(evolutionClient, {
   pools: [
     {
-      poolOutRef: pool1OutRef,
+      poolOutRef: "tx_hash#index",
       deltaAmount: 5_000_000n,
-      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in current epoch
+      stakingOutRef: "tx_hash#index" // required if pool contains ADA and swap for the first time in current epoch
     },
     {
-      poolOutRef: pool2OutRef,
+      poolOutRef: "tx_hash#index",
       deltaAmount: 5_000_000n,
-      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in current epoch
+      stakingOutRef: "tx_hash#index" // required if pool contains ADA and swap for the first time in current epoch
     }
   ]
 });
@@ -68,19 +69,19 @@ Build and submit a swap transaction across one or more pools.
 const txHash = await danogoClmm.submitSwap(evolutionClient, {
   pools: [
     {
-      poolOutRef: pool1OutRef,
+      poolOutRef: "tx_hash#index",
       deltaAmount: 5_000_000n,
       minOutChangeAmount: 4_500_000n, // retrieve from calculateSwapOut to avoid slippage
-      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in current epoch
+      stakingOutRef: "tx_hash#index" // required if pool contains ADA and swap for the first time in current epoch
     },
     {
-      poolOutRef: pool2OutRef,
+      poolOutRef: "tx_hash#index",
       deltaAmount: 5_000_000n,
       minOutChangeAmount: 4_500_000n, // retrieve from calculateSwapOut to avoid slippage
-      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in current epoch
+      stakingOutRef: "tx_hash#index" // required if pool contains ADA and swap for the first time in current epoch
     }
   ],
-  protocolConfigOutRef: protocolConfigRef
+  protocolConfigOutRef: "tx_hash#index"
 });
 ```
 

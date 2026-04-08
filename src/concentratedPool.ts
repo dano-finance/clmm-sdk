@@ -1,4 +1,3 @@
-import { TransactionInput } from "@evolution-sdk/evolution";
 import { MultiAsset } from "./multiAssets.js";
 
 export interface ConcentratedPool {
@@ -28,20 +27,20 @@ export interface ConcentratedPool {
 
 export interface SwapRequest {
   pools: {
-    poolOutRef: TransactionInput.TransactionInput;
+    poolOutRef: string;
     deltaAmount: bigint;
     minOutChangeAmount: bigint;
-    stakingOutRef?: TransactionInput.TransactionInput;
+    stakingOutRef?: string;
   }[];
-  protocolConfigOutRef?: TransactionInput.TransactionInput;
+  protocolConfigOutRef?: string;
 }
 
 
 export interface QuoteSwapRequest {
   pools: {
-    poolOutRef: TransactionInput.TransactionInput;
+    poolOutRef: string;
     deltaAmount: bigint;
-    stakingOutRef?: TransactionInput.TransactionInput;
+    stakingOutRef?: string;
   }[];
-  protocolConfigOutRef?: TransactionInput.TransactionInput;
+  protocolConfigOutRef?: string;
 }

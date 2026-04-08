@@ -30,8 +30,10 @@ import {
   calculateMultiPoolSwap,
   getEpoch,
   getPoolProtocolConfigIdx,
+  toEvoOutRef,
 } from "./utils.js";
 import { ADA_UNIT, getNetworkConfig } from "./constants.js";
+import { toHex } from "@evolution-sdk/evolution/Bytes32";
 
 class DanogoClmm {
   constructor() { }
@@ -79,7 +81,7 @@ class DanogoClmm {
 
     // Fetch all pool UTxOs
     const poolUtxos = await Promise.all(
-      request.pools.map(pool => client.getUtxosByOutRef([pool.poolOutRef]))
+      request.pools.map(pool => client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))
     );
 
     const config = getNetworkConfig(networkId);
@@ -87,7 +89,7 @@ class DanogoClmm {
 
     // Fetch protocol config
     const protocolConfigUtxo = (
-      await client.getUtxosByOutRef([protocolConfigOutRef])
+      await client.getUtxosByOutRef([toEvoOutRef(protocolConfigOutRef)])
     )[0];
     if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
@@ -118,7 +120,7 @@ class DanogoClmm {
         let stakingRefUtxo = null;
         if (pool.stakingOutRef) {
           stakingRefUtxo = (
-            await client.getUtxosByOutRef([pool.stakingOutRef])
+            await client.getUtxosByOutRef([toEvoOutRef(pool.stakingOutRef)])
           )[0];
         }
 
@@ -196,7 +198,7 @@ class DanogoClmm {
 
     // Fetch all pool UTxOs and script UTxO
     const poolUtxos: UTxO.UTxO[] = await Promise.all(
-      request.pools.map(async pool => (await client.getUtxosByOutRef([pool.poolOutRef]))[0])
+      request.pools.map(async pool => (await client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))[0])
     );
 
     const config = getNetworkConfig(networkId);
@@ -204,12 +206,12 @@ class DanogoClmm {
     const protocolConfigOutRef = request.protocolConfigOutRef ?? config.protocolScriptOutRef;
 
     const poolScriptUtxo = (
-      await client.getUtxosByOutRef([poolScriptOutRef])
+      await client.getUtxosByOutRef([toEvoOutRef(poolScriptOutRef)])
     )[0];
 
     // Fetch protocol config
     const protocolConfigUtxo = (
-      await client.getUtxosByOutRef([protocolConfigOutRef])
+      await client.getUtxosByOutRef([toEvoOutRef(protocolConfigOutRef)])
     )[0];
     if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
@@ -244,7 +246,7 @@ class DanogoClmm {
       let stakingRefUtxo = null;
       if (pool.stakingOutRef) {
         stakingRefUtxo = (
-          await client.getUtxosByOutRef([pool.stakingOutRef])
+          await client.getUtxosByOutRef([toEvoOutRef(pool.stakingOutRef)])
         )[0];
       }
       stakingUtxos.push(stakingRefUtxo);
@@ -423,7 +425,7 @@ class DanogoClmm {
     });
     const signedTx = await builtTx.sign();
     const txHash = await signedTx.submit();
-    return txHash.toString();
+    return toHex(txHash.hash);
   }
 
   /**
@@ -587,5 +589,6 @@ export {
   ConcentratedPool,
   PoolDatum,
   SwapRequest,
-  QuoteSwapRequest
+  QuoteSwapRequest,
+  toEvoOutRef
 };

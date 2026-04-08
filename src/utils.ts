@@ -1,4 +1,4 @@
-import { NetworkId, UTxO } from "@evolution-sdk/evolution";
+import { NetworkId, TransactionHash, TransactionInput, UTxO } from "@evolution-sdk/evolution";
 import { PoolDatum } from "./datum.js";
 import { ADA_UNIT, EPOCH_LENGTH_MAINNET, EPOCH_LENGTH_PREPROD } from "./constants.js";
 
@@ -195,3 +195,14 @@ export function calculateMultiPoolSwap(
 
   return results;
 }
+
+export const toEvoOutRef = (
+  outRefString: string,
+): TransactionInput.TransactionInput | undefined => {
+  if (!outRefString) return undefined;
+  const [txId, index] = outRefString.split("#");
+  return new TransactionInput.TransactionInput({
+    transactionId: TransactionHash.fromHex(txId),
+    index: BigInt(index),
+  });
+};
