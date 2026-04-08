@@ -33,7 +33,7 @@ import {
 } from "./utils.js";
 import { ADA_UNIT, getNetworkConfig } from "./constants.js";
 
-class DanogoSwap {
+class DanogoClmm {
   constructor() { }
 
 
@@ -582,7 +582,7 @@ class DanogoSwap {
   }
 }
 
-export default DanogoSwap;
+export default DanogoClmm;
 export {
   ConcentratedPool,
   PoolDatum,

@@ -1,4 +1,4 @@
-# Danogo Swap SDK
+# Danogo CLMM SDK
 
 An SDK to calculate and execute swaps on the Danogo liquidity platform on the Cardano network.
 
@@ -12,19 +12,29 @@ npm install danogo-clmm
 
 This SDK requires:
 - Node.js 18+
-- `@evolution-sdk/evolution` for wallet management and transaction building
-- A Kupmios provider for blockchain data
-- An Ogmios instance for transaction submission
+- `@evolution-sdk/evolution` version `0.32.2` for wallet management and transaction building
+- A Kupmios provider for blockchain data and transaction submission
 
 ## Usage
 
 ### Initialization
 
-Initialize the SDK.
+Initialize the SDK and the Evolution client.
 ```typescript
-import DanogoSwap from "danogo-clmm";
+import DanogoClmm from "danogo-clmm";
+import { client, preprod } from "@evolution-sdk/evolution";
 
-const sdk = new DanogoSwap();
+const danogoClmm = new DanogoClmm();
+
+const evolutionClient = client(preprod)
+  .withKupmios({
+    kupoUrl: "your_kupo_url",
+    ogmiosUrl: "your_ogmios_url",
+  })
+  .withSeed({
+    mnemonic: "your_seed_phrase",
+    accountIndex: 0,
+  });
 ```
 
 ### 1. Calculate Swap Output (Quote)
@@ -33,17 +43,17 @@ Calculate the expected output of a swap without submitting a transaction. You ca
 
 #### Examples
 ```typescript
-const quote = await sdk.calculateSwapOut(client, {
+const quote = await danogoClmm.calculateSwapOut(evolutionClient, {
   pools: [
     {
       poolOutRef: pool1OutRef,
-      deltaAmount: 500_000n,
-      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in an epoch
+      deltaAmount: 5_000_000n,
+      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in current epoch
     },
     {
       poolOutRef: pool2OutRef,
-      deltaAmount: 500_000n,
-      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in an epoch
+      deltaAmount: 5_000_000n,
+      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in current epoch
     }
   ]
 });
@@ -55,19 +65,19 @@ Build and submit a swap transaction across one or more pools.
 
 #### Examples
 ```typescript
-const txHash = await sdk.submitSwap(client, {
+const txHash = await danogoClmm.submitSwap(evolutionClient, {
   pools: [
     {
       poolOutRef: pool1OutRef,
-      deltaAmount: 500_000n,
-      minOutChangeAmount: 450_000n,
-      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in an epoch
+      deltaAmount: 5_000_000n,
+      minOutChangeAmount: 4_500_000n, // retrieve from calculateSwapOut to avoid slippage
+      stakingOutRef: staking1OutRef // required if pool contains ADA and swap for the first time in current epoch
     },
     {
       poolOutRef: pool2OutRef,
-      deltaAmount: 500_000n,
-      minOutChangeAmount: 450_000n,
-      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in an epoch
+      deltaAmount: 5_000_000n,
+      minOutChangeAmount: 4_500_000n, // retrieve from calculateSwapOut to avoid slippage
+      stakingOutRef: staking2OutRef // required if pool contains ADA and swap for the first time in current epoch
     }
   ],
   protocolConfigOutRef: protocolConfigRef
@@ -81,11 +91,11 @@ const txHash = await sdk.submitSwap(client, {
 Extract pool data directly from an Ogmios transaction object.
 
 ```typescript
-import DanogoSwap from "danogo-clmm";
+import DanogoClmm from "danogo-clmm";
 import { createChainSynchronizationClient, createInteractionContext } from "@cardano-ogmios/client";
 import { Point } from "@cardano-ogmios/schema";
 
-const sdk = new DanogoSwap();
+const danogoClmm = new DanogoClmm();
 
 async function main() {
   const context = await createInteractionContext(
@@ -105,7 +115,7 @@ async function main() {
       if ("transactions" in block) {
         for (const tx of block.transactions!) {
           const networkId = 0; // 0 for Preprod, 1 for Mainnet
-          const pools = sdk.getPoolsFromOgmiosTx(tx, networkId);
+          const pools = danogoClmm.getPoolsFromOgmiosTx(tx, networkId);
           // your logic with pools
         }
       }
