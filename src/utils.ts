@@ -163,7 +163,7 @@ export function calculateMultiPoolSwap(
     tokenAAmount: bigint;
     tokenBAmount: bigint;
     datum: PoolDatum;
-    rewardAmount?: bigint;
+    rewardAmount: bigint;
   }>,
   deltaAmounts: bigint[],
   platformFeeRate: bigint
@@ -181,7 +181,7 @@ export function calculateMultiPoolSwap(
       pool.tokenBAmount,
       pool.datum,
       deltaAmount,
-      pool.rewardAmount || 0n,
+      pool.rewardAmount,
       platformFeeRate
     );
 
@@ -196,6 +196,7 @@ export function calculateMultiPoolSwap(
   return results;
 }
 
+/** @internal */
 export const toEvoOutRef = (
   outRefString: string,
 ): TransactionInput.TransactionInput | undefined => {

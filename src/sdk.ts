@@ -7,7 +7,13 @@ import {
 import { SigningTransactionBuilder } from "@evolution-sdk/evolution/sdk/builders/TransactionBuilder";
 import { InlineDatum } from "@evolution-sdk/evolution/InlineDatum";
 import { fromScript } from "@evolution-sdk/evolution/ScriptHash";
-import { fromAsset, merge, quantityOf, fromLovelace, subtractLovelace } from "@evolution-sdk/evolution/Assets";
+import {
+  fromAsset,
+  merge,
+  quantityOf,
+  fromLovelace,
+  subtractLovelace,
+} from "@evolution-sdk/evolution/Assets";
 import { Transaction } from "@cardano-ogmios/schema";
 import { swapTokensRedeemer } from "./redeemer.js";
 import {
@@ -37,7 +43,6 @@ import { toHex } from "@evolution-sdk/evolution/Bytes32";
 
 class DanogoClmm {
   constructor() { }
-
 
   /**
    * Calculates the expected output amount for a swap across multiple liquidity pools.
@@ -78,14 +83,18 @@ class DanogoClmm {
       throw new Error("Please connect a wallet first.");
     }
     const networkId = (await client.address()).networkId;
+    const currentEpoch = getEpoch(Date.now(), networkId);
 
     // Fetch all pool UTxOs
     const poolUtxos = await Promise.all(
-      request.pools.map(pool => client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))
+      request.pools.map((pool) =>
+        client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]),
+      ),
     );
 
     const config = getNetworkConfig(networkId);
-    const protocolConfigOutRef = request.protocolConfigOutRef ?? config.protocolScriptOutRef;
+    const protocolConfigOutRef =
+      request.protocolConfigOutRef ?? config.protocolScriptOutRef;
 
     // Fetch protocol config
     const protocolConfigUtxo = (
@@ -123,13 +132,17 @@ class DanogoClmm {
             await client.getUtxosByOutRef([toEvoOutRef(pool.stakingOutRef)])
           )[0];
         }
-
-        const { rewardAmount } = await this.getStakingRewards(
-          client,
-          networkId,
-          stakingRefUtxo,
-          tokenA
-        );
+        let rewardAmount = 0n;
+        if (
+          tokenA.unit === ADA_UNIT &&
+          stakingRefUtxo &&
+          currentEpoch > poolDatum.lastWithdrawEpoch
+        )
+          rewardAmount = await this.getRewardAmount(
+            client,
+            networkId,
+            stakingRefUtxo,
+          );
 
         return {
           tokenAAmount: getTokenAmount(tokenA),
@@ -141,17 +154,16 @@ class DanogoClmm {
     );
 
     // Calculate multi-pool swap
-    const deltaAmounts = request.pools.map(pool => pool.deltaAmount);
+    const deltaAmounts = request.pools.map((pool) => pool.deltaAmount);
     const swapResults = calculateMultiPoolSwap(
       poolsData,
       deltaAmounts,
-      protocolConfigDatum.platformFeeRate
+      protocolConfigDatum.platformFeeRate,
     );
 
     // Return all output amounts
-    return swapResults.map(result => result.outputAmount);
+    return swapResults.map((result) => result.outputAmount);
   }
-
 
   /**
    * Builds and submits a swap transaction to the network.
@@ -195,15 +207,20 @@ class DanogoClmm {
       throw new Error("Please connect a wallet first.");
     }
     const networkId = (await client.address()).networkId;
+    const currentEpoch = getEpoch(Date.now(), networkId);
 
     // Fetch all pool UTxOs and script UTxO
     const poolUtxos: UTxO.UTxO[] = await Promise.all(
-      request.pools.map(async pool => (await client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))[0])
+      request.pools.map(
+        async (pool) =>
+          (await client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))[0],
+      ),
     );
 
     const config = getNetworkConfig(networkId);
     const poolScriptOutRef = config.poolScriptOutRef;
-    const protocolConfigOutRef = request.protocolConfigOutRef ?? config.protocolScriptOutRef;
+    const protocolConfigOutRef =
+      request.protocolConfigOutRef ?? config.protocolScriptOutRef;
 
     const poolScriptUtxo = (
       await client.getUtxosByOutRef([toEvoOutRef(poolScriptOutRef)])
@@ -251,18 +268,10 @@ class DanogoClmm {
       }
       stakingUtxos.push(stakingRefUtxo);
 
-      const { rewardAmount } = await this.getStakingRewards(
-        client,
-        networkId,
-        stakingRefUtxo,
-        tokenA
-      );
-
       poolsData.push({
         tokenAAmount: getTokenAmount(tokenA),
         tokenBAmount: getTokenAmount(tokenB),
         datum: poolDatum,
-        rewardAmount,
         utxo: poolUtxo,
         tokenA,
         tokenB,
@@ -270,11 +279,11 @@ class DanogoClmm {
     }
 
     // Calculate multi-pool swap
-    const deltaAmounts = request.pools.map(pool => pool.deltaAmount);
+    const deltaAmounts = request.pools.map((pool) => pool.deltaAmount);
     const swapResults = calculateMultiPoolSwap(
       poolsData,
       deltaAmounts,
-      protocolConfigDatum.platformFeeRate
+      protocolConfigDatum.platformFeeRate,
     );
 
     // Check output meets minimum for each pool
@@ -288,14 +297,25 @@ class DanogoClmm {
     });
 
     // Check user has enough input tokens
-    const totalInputAmount = swapResults.reduce((sum, result) => sum + result.deltaAmount, 0n);
+    const totalInputAmount = swapResults.reduce(
+      (sum, result) => sum + result.deltaAmount,
+      0n,
+    );
     // Determine input token from the first non-zero delta amount
-    const firstNonZeroDelta = request.pools.find(pool => pool.deltaAmount !== 0n);
+    const firstNonZeroDelta = request.pools.find(
+      (pool) => pool.deltaAmount !== 0n,
+    );
     if (!firstNonZeroDelta) {
       throw new Error("At least one pool must have a non-zero delta amount");
     }
-    const inputToken = firstNonZeroDelta.deltaAmount > 0 ? poolsData[0].tokenA : poolsData[0].tokenB;
-    const totalTokenInBalance = await this.getUserTokenBalance(client, inputToken);
+    const inputToken =
+      firstNonZeroDelta.deltaAmount > 0
+        ? poolsData[0].tokenA
+        : poolsData[0].tokenB;
+    const totalTokenInBalance = await this.getUserTokenBalance(
+      client,
+      inputToken,
+    );
     if (totalTokenInBalance < totalInputAmount) {
       throw new Error(
         `Insufficient ${inputToken.unit} balance. Required: ${totalInputAmount}, Available: ${totalTokenInBalance}`,
@@ -308,13 +328,12 @@ class DanogoClmm {
     // Add reference inputs
     const referenceInputs = [protocolConfigUtxo];
     referenceInputs.push(poolScriptUtxo);
-    stakingUtxos.forEach(staking => {
+    stakingUtxos.forEach((staking) => {
       if (staking) referenceInputs.push(staking);
     });
     tx = tx.readFrom({ referenceInputs });
 
     // Process each pool
-    const currentEpoch = getEpoch(Date.now(), networkId);
     const protocolConfigIdx = getPoolProtocolConfigIdx(
       protocolConfigUtxo,
       referenceInputs,
@@ -334,7 +353,7 @@ class DanogoClmm {
 
     for (let i = 0; i < poolsData.length; i++) {
       const pool = poolsData[i];
-      const swapResult = swapResults.find(r => r.poolIndex === i);
+      const swapResult = swapResults.find((r) => r.poolIndex === i);
       if (!swapResult) continue;
 
       const deltaAmount = swapResult.deltaAmount;
@@ -360,7 +379,7 @@ class DanogoClmm {
         deltaAmount > 0 ? pool.tokenB : pool.tokenA,
         deltaAmount,
         BigInt(swapResult.outputAmount),
-        BigInt(protocolConfigDatum.swapFee)
+        BigInt(protocolConfigDatum.swapFee),
       );
       const poolOutAssets = merge(pool.utxo.assets, deltaAssets);
 
@@ -388,24 +407,17 @@ class DanogoClmm {
         currentEpoch > pool.datum.lastWithdrawEpoch &&
         stakingUtxos[i]
       ) {
-        const { stakingRewardAddress } = await this.getStakingRewards(
-          client,
-          networkId,
-          stakingUtxos[i],
-          pool.tokenA
-        );
-        if (stakingRewardAddress) {
-          tx = tx.withdraw({
-            stakeCredential: fromScript(stakingUtxos[i]!.scriptRef!),
-            amount: pool.rewardAmount || 0n,
-            redeemer: swapTokensRedeemer(
-              pool.utxo,
-              poolUtxos,
-              deltaAmounts,
-              protocolConfigIdx,
-            ),
-          });
-        }
+        const rewardAmount = await this.getRewardAmount(client, networkId, stakingUtxos[i]);
+        tx = tx.withdraw({
+          stakeCredential: fromScript(stakingUtxos[i]!.scriptRef!),
+          amount: rewardAmount,
+          redeemer: swapTokensRedeemer(
+            pool.utxo,
+            poolUtxos,
+            deltaAmounts,
+            protocolConfigIdx,
+          ),
+        });
       }
     }
 
@@ -421,7 +433,7 @@ class DanogoClmm {
       to: BigInt(Date.now() + 240000),
     });
     const builtTx = await tx.build({
-      scriptDataFormat: "array"
+      scriptDataFormat: "array",
     });
     const signedTx = await builtTx.sign();
     const txHash = await signedTx.submit();
@@ -447,7 +459,9 @@ class DanogoClmm {
     const scriptHash = poolScriptHash ?? config.poolScriptHash;
 
     if (!scriptHash) {
-      throw new Error("Pool script hash is required but not provided or not found for this network.");
+      throw new Error(
+        "Pool script hash is required but not provided or not found for this network.",
+      );
     }
 
     const concentratedPools: ConcentratedPool[] = [];
@@ -516,7 +530,7 @@ class DanogoClmm {
    */
   private async getUserTokenBalance(
     client: SigningClient,
-    token: { unit: string; policyId?: any; assetName?: any }
+    token: { unit: string; policyId?: any; assetName?: any },
   ): Promise<bigint> {
     const userUtxos = await client.getWalletUtxos();
     return userUtxos.reduce(
@@ -524,8 +538,8 @@ class DanogoClmm {
         acc +
         (token.unit === ADA_UNIT
           ? utxo.assets.lovelace
-          : (quantityOf(utxo.assets, token.policyId, token.assetName) || 0n)),
-      0n
+          : quantityOf(utxo.assets, token.policyId, token.assetName) || 0n),
+      0n,
     );
   }
 
@@ -537,7 +551,7 @@ class DanogoClmm {
     tokenOut: { unit: string; policyId?: any; assetName?: any },
     deltaAmount: bigint,
     tokenToReceiveAmount: bigint,
-    swapFee: bigint
+    swapFee: bigint,
   ): any {
     // Input amount (including swap fee)
     const inputAmount = deltaAmount > 0n ? deltaAmount : -deltaAmount;
@@ -546,14 +560,23 @@ class DanogoClmm {
     if (tokenIn.unit === ADA_UNIT) {
       deltaAssets = fromLovelace(inputAmount + swapFee);
     } else {
-      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, inputAmount, swapFee);
+      deltaAssets = fromAsset(
+        tokenIn.policyId,
+        tokenIn.assetName,
+        inputAmount,
+        swapFee,
+      );
     }
 
     // Output amount
     if (tokenOut.unit === ADA_UNIT) {
       deltaAssets = subtractLovelace(deltaAssets, tokenToReceiveAmount);
     } else {
-      const outputAssets = fromAsset(tokenOut.policyId, tokenOut.assetName, -tokenToReceiveAmount);
+      const outputAssets = fromAsset(
+        tokenOut.policyId,
+        tokenOut.assetName,
+        -tokenToReceiveAmount,
+      );
       deltaAssets = merge(deltaAssets, outputAssets);
     }
 
@@ -563,24 +586,21 @@ class DanogoClmm {
   /**
    * Helper function to handle staking rewards for ADA pools
    */
-  private async getStakingRewards(
+  private async getRewardAmount(
     client: SigningClient,
     networkId: number,
-    stakingRefUtxo: any,
-    tokenA: { unit: string }
-  ): Promise<{ rewardAmount: bigint; stakingRewardAddress?: RewardAddress.RewardAddress }> {
-    if (tokenA.unit !== ADA_UNIT) {
-      return { rewardAmount: 0n };
-    }
-
+    stakingRefUtxo: UTxO.UTxO,
+  ): Promise<bigint> {
     const stakingAccount = new RewardAccount.RewardAccount({
       networkId,
       stakeCredential: fromScript(stakingRefUtxo.scriptRef!),
     });
-    const stakingRewardAddress = RewardAccount.toBech32(stakingAccount) as RewardAddress.RewardAddress;
+    const stakingRewardAddress = RewardAccount.toBech32(
+      stakingAccount,
+    ) as RewardAddress.RewardAddress;
     const rewardAmount = (await client.getDelegation(stakingRewardAddress)).rewards;
 
-    return { rewardAmount, stakingRewardAddress };
+    return rewardAmount;
   }
 }
 
@@ -590,5 +610,4 @@ export {
   PoolDatum,
   SwapRequest,
   QuoteSwapRequest,
-  toEvoOutRef
 };
