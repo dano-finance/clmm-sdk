@@ -329,7 +329,6 @@ class DanogoClmm {
     //     `Insufficient ${inputToken.unit} balance. Required: ${totalInputAmount}, Available: ${totalTokenInBalance}`,
     //   );
     // }
-    console.log("SKIPPED BALANCE CHECK !!!!!!!!!!!!!!!!!!!!!!!!!!")
 
     // Initialize transaction builder
     let tx: SigningTransactionBuilder = client.newTx();
@@ -365,7 +364,7 @@ class DanogoClmm {
       const swapResult = swapResults.find(r => r.poolIndex === i);
       if (!swapResult) continue;
 
-      const deltaAmount = swapResult.deltaAmount;
+      const tokenInIsX = swapResult.tokenIn == pool.datum.tokenX;
       const platformFee = swapResult.platformFee;
 
       // Transform pool datum
@@ -373,10 +372,10 @@ class DanogoClmm {
         ...pool.datum,
         platformFeeX:
           BigInt(pool.datum.platformFeeX) +
-          (deltaAmount > 0 ? platformFee : 0n),
+          (tokenInIsX ? platformFee : 0n),
         platformFeeY:
           BigInt(pool.datum.platformFeeY) +
-          (deltaAmount < 0 ? platformFee : 0n),
+          (!tokenInIsX ? platformFee : 0n),
         lastWithdrawEpoch: currentEpoch,
         totalSwapFee:
           BigInt(pool.datum.totalSwapFee) + BigInt(protocolConfigDatum.swapFee),
@@ -384,11 +383,11 @@ class DanogoClmm {
 
       // Calculate output assets
       const deltaAssets = this.buildDeltaAssets(
-        deltaAmount > 0 ? pool.tokenA : pool.tokenB,
-        deltaAmount > 0 ? pool.tokenB : pool.tokenA,
-        deltaAmount,
-        BigInt(swapResult.outputAmount),
-        BigInt(protocolConfigDatum.swapFee)
+        tokenInIsX ? pool.tokenA : pool.tokenB,
+        tokenInIsX ? pool.tokenB : pool.tokenA,
+        swapResult.inputAmount,
+        swapResult.outputAmount,
+        protocolConfigDatum.swapFee
       );
       const poolOutAssets = merge(pool.utxo.assets, deltaAssets);
 
@@ -561,25 +560,24 @@ class DanogoClmm {
   private buildDeltaAssets(
     tokenIn: { unit: string; policyId?: any; assetName?: any },
     tokenOut: { unit: string; policyId?: any; assetName?: any },
-    deltaAmount: bigint,
-    tokenToReceiveAmount: bigint,
+    amountIn: bigint,
+    amountOut: bigint,
     swapFee: bigint
   ): any {
-    // Input amount (including swap fee)
-    const inputAmount = deltaAmount > 0n ? deltaAmount : -deltaAmount;
     let deltaAssets: any;
 
+    // Input amount (including swap fee)
     if (tokenIn.unit === ADA_UNIT) {
-      deltaAssets = fromLovelace(inputAmount + swapFee);
+      deltaAssets = fromLovelace(amountIn + swapFee);
     } else {
-      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, inputAmount, swapFee);
+      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, amountIn, swapFee);
     }
 
     // Output amount
     if (tokenOut.unit === ADA_UNIT) {
-      deltaAssets = subtractLovelace(deltaAssets, tokenToReceiveAmount);
+      deltaAssets = subtractLovelace(deltaAssets, amountOut);
     } else {
-      const outputAssets = fromAsset(tokenOut.policyId, tokenOut.assetName, -tokenToReceiveAmount);
+      const outputAssets = fromAsset(tokenOut.policyId, tokenOut.assetName, -amountOut);
       deltaAssets = merge(deltaAssets, outputAssets);
     }
 
