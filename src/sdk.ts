@@ -560,17 +560,19 @@ class DanogoClmm {
   private buildDeltaAssets(
     tokenIn: { unit: string; policyId?: any; assetName?: any },
     tokenOut: { unit: string; policyId?: any; assetName?: any },
-    amountIn: bigint,
+    deltaAmount: bigint,
     amountOut: bigint,
     swapFee: bigint
   ): any {
+    // Input amount (including swap fee)
+    const inputAmount = deltaAmount > 0n ? deltaAmount : -deltaAmount;
     let deltaAssets: any;
 
     // Input amount (including swap fee)
     if (tokenIn.unit === ADA_UNIT) {
-      deltaAssets = fromLovelace(amountIn + swapFee);
+      deltaAssets = fromLovelace(inputAmount + swapFee);
     } else {
-      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, amountIn, swapFee);
+      deltaAssets = fromAsset(tokenIn.policyId, tokenIn.assetName, inputAmount, swapFee);
     }
 
     // Output amount
