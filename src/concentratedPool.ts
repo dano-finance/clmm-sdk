@@ -29,7 +29,7 @@ export interface SwapRequest {
   pools: {
     poolOutRef: string;
     deltaAmount: bigint;
-    minOutChangeAmount: bigint;
+    minOutChangeAmount?: bigint;
     stakingOutRef?: string;
   }[];
   protocolConfigOutRef?: string;

@@ -72,8 +72,8 @@ export const transformPoolDatum = (datum: PoolDatum): InlineDatum => {
 /** @internal */
 export const transformProtocolConfigDatum = (datum: ProtocolConfigDatum): InlineDatum => {
   const protocolConfigData = Data.constr(0n, [
-    BigInt(datum.platformFeeRate),
-    BigInt(datum.swapFee),
+    datum.platformFeeRate,
+    datum.swapFee,
   ]);
 
   const hex = Data.toCBORHex(protocolConfigData);

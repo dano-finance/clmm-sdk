@@ -1,6 +1,6 @@
 {
   "name": "danogo-clmm",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "An SDK to calculate and execute swaps on the Danogo liquidity platform.",
   "main": "./dist/sdk.js",
   "module": "./dist/sdk.mjs",

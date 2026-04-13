@@ -87,9 +87,9 @@ class DanogoClmm {
 
     // Fetch all pool UTxOs
     const poolUtxos = await Promise.all(
-      request.pools.map((pool) =>
-        client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]),
-      ),
+      request.pools.map(pool =>
+        this.getUtxoOrThrow(client, pool.poolOutRef, "Pool input")
+      )
     );
 
     const config = getNetworkConfig(networkId);
@@ -97,20 +97,16 @@ class DanogoClmm {
       request.protocolConfigOutRef ?? config.protocolScriptOutRef;
 
     // Fetch protocol config
-    const protocolConfigUtxo = (
-      await client.getUtxosByOutRef([toEvoOutRef(protocolConfigOutRef)])
-    )[0];
+    const protocolConfigUtxo = await this.getUtxoOrThrow(client, protocolConfigOutRef, "Protocol config");
     if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
     }
-    const protocolConfigDatum = parseProtocolConfigDatum(
-      protocolConfigUtxo.datumOption as InlineDatum,
-    );
+    const protocolConfigDatum = parseProtocolConfigDatum(protocolConfigUtxo.datumOption as InlineDatum);
 
     // Prepare pool data for calculation
     const poolsData = await Promise.all(
       request.pools.map(async (pool, index) => {
-        const poolUtxo = poolUtxos[index][0];
+        const poolUtxo = poolUtxos[index];
         if (!poolUtxo.datumOption) {
           throw new Error(`Pool input UTxO ${index} does not contain a datum.`);
         }
@@ -128,9 +124,7 @@ class DanogoClmm {
 
         let stakingRefUtxo = null;
         if (pool.stakingOutRef) {
-          stakingRefUtxo = (
-            await client.getUtxosByOutRef([toEvoOutRef(pool.stakingOutRef)])
-          )[0];
+          stakingRefUtxo = await this.getUtxoOrThrow(client, pool.stakingOutRef, "Staking");
         }
         let rewardAmount = 0n;
         if (
@@ -211,9 +205,8 @@ class DanogoClmm {
 
     // Fetch all pool UTxOs and script UTxO
     const poolUtxos: UTxO.UTxO[] = await Promise.all(
-      request.pools.map(
-        async (pool) =>
-          (await client.getUtxosByOutRef([toEvoOutRef(pool.poolOutRef)]))[0],
+      request.pools.map((pool) =>
+        this.getUtxoOrThrow(client, pool.poolOutRef, "Pool input")
       ),
     );
 
@@ -222,20 +215,14 @@ class DanogoClmm {
     const protocolConfigOutRef =
       request.protocolConfigOutRef ?? config.protocolScriptOutRef;
 
-    const poolScriptUtxo = (
-      await client.getUtxosByOutRef([toEvoOutRef(poolScriptOutRef)])
-    )[0];
+    const poolScriptUtxo = await this.getUtxoOrThrow(client, poolScriptOutRef, "Pool script");
 
     // Fetch protocol config
-    const protocolConfigUtxo = (
-      await client.getUtxosByOutRef([toEvoOutRef(protocolConfigOutRef)])
-    )[0];
+    const protocolConfigUtxo = await this.getUtxoOrThrow(client, protocolConfigOutRef, "Protocol config");
     if (!protocolConfigUtxo.datumOption) {
       throw new Error("Protocol config UTxO does not contain a datum.");
     }
-    const protocolConfigDatum = parseProtocolConfigDatum(
-      protocolConfigUtxo.datumOption as InlineDatum,
-    );
+    const protocolConfigDatum = parseProtocolConfigDatum(protocolConfigUtxo.datumOption as InlineDatum);
 
     // Prepare pool data and calculate swap results
     const poolsData = [];
@@ -262,9 +249,7 @@ class DanogoClmm {
 
       let stakingRefUtxo = null;
       if (pool.stakingOutRef) {
-        stakingRefUtxo = (
-          await client.getUtxosByOutRef([toEvoOutRef(pool.stakingOutRef)])
-        )[0];
+        stakingRefUtxo = await this.getUtxoOrThrow(client, pool.stakingOutRef, "Staking");
       }
       stakingUtxos.push(stakingRefUtxo);
 
@@ -288,39 +273,13 @@ class DanogoClmm {
 
     // Check output meets minimum for each pool
     swapResults.forEach((result, index) => {
-      const minOut = request.pools[index].minOutChangeAmount;
+      const minOut = request.pools[index].minOutChangeAmount ?? 0n;
       if (result.outputAmount < minOut) {
         throw new Error(
           `Expected swap output at least ${minOut} but got ${result.outputAmount}`,
         );
       }
     });
-
-    // Check user has enough input tokens
-    const totalInputAmount = swapResults.reduce(
-      (sum, result) => sum + result.deltaAmount,
-      0n,
-    );
-    // Determine input token from the first non-zero delta amount
-    const firstNonZeroDelta = request.pools.find(
-      (pool) => pool.deltaAmount !== 0n,
-    );
-    if (!firstNonZeroDelta) {
-      throw new Error("At least one pool must have a non-zero delta amount");
-    }
-    const inputToken =
-      firstNonZeroDelta.deltaAmount > 0
-        ? poolsData[0].tokenA
-        : poolsData[0].tokenB;
-    const totalTokenInBalance = await this.getUserTokenBalance(
-      client,
-      inputToken,
-    );
-    if (totalTokenInBalance < totalInputAmount) {
-      throw new Error(
-        `Insufficient ${inputToken.unit} balance. Required: ${totalInputAmount}, Available: ${totalTokenInBalance}`,
-      );
-    }
 
     // Initialize transaction builder
     let tx: SigningTransactionBuilder = client.newTx();
@@ -356,8 +315,7 @@ class DanogoClmm {
       const swapResult = swapResults.find((r) => r.poolIndex === i);
       if (!swapResult) continue;
 
-      const deltaAmount = swapResult.deltaAmount;
-      const platformFee = swapResult.platformFee;
+      const { deltaAmount, platformFee, outputAmount } = swapResult;
 
       // Transform pool datum
       const transformedDatum = transformPoolDatum({
@@ -370,7 +328,7 @@ class DanogoClmm {
           (deltaAmount < 0 ? platformFee : 0n),
         lastWithdrawEpoch: currentEpoch,
         totalSwapFee:
-          BigInt(pool.datum.totalSwapFee) + BigInt(protocolConfigDatum.swapFee),
+          BigInt(pool.datum.totalSwapFee) + protocolConfigDatum.swapFee,
       });
 
       // Calculate output assets
@@ -378,8 +336,8 @@ class DanogoClmm {
         deltaAmount > 0 ? pool.tokenA : pool.tokenB,
         deltaAmount > 0 ? pool.tokenB : pool.tokenA,
         deltaAmount,
-        BigInt(swapResult.outputAmount),
-        BigInt(protocolConfigDatum.swapFee),
+        outputAmount,
+        protocolConfigDatum.swapFee,
       );
       const poolOutAssets = merge(pool.utxo.assets, deltaAssets);
 
@@ -550,32 +508,33 @@ class DanogoClmm {
     tokenIn: { unit: string; policyId?: any; assetName?: any },
     tokenOut: { unit: string; policyId?: any; assetName?: any },
     deltaAmount: bigint,
-    tokenToReceiveAmount: bigint,
+    amountOut: bigint,
     swapFee: bigint,
   ): any {
-    // Input amount (including swap fee)
-    const inputAmount = deltaAmount > 0n ? deltaAmount : -deltaAmount;
+    // amountIn = abs(deltaAmount)
+    const amountIn = deltaAmount > 0n ? deltaAmount : -deltaAmount;
     let deltaAssets: any;
 
+    // Input amount (including swap fee)
     if (tokenIn.unit === ADA_UNIT) {
-      deltaAssets = fromLovelace(inputAmount + swapFee);
+      deltaAssets = fromLovelace(amountIn + swapFee);
     } else {
       deltaAssets = fromAsset(
         tokenIn.policyId,
         tokenIn.assetName,
-        inputAmount,
+        amountIn,
         swapFee,
       );
     }
 
     // Output amount
     if (tokenOut.unit === ADA_UNIT) {
-      deltaAssets = subtractLovelace(deltaAssets, tokenToReceiveAmount);
+      deltaAssets = subtractLovelace(deltaAssets, amountOut);
     } else {
       const outputAssets = fromAsset(
         tokenOut.policyId,
         tokenOut.assetName,
-        -tokenToReceiveAmount,
+        -amountOut,
       );
       deltaAssets = merge(deltaAssets, outputAssets);
     }
@@ -602,6 +561,25 @@ class DanogoClmm {
 
     return rewardAmount;
   }
+
+  /**
+   * Helper function to get UTxO or throw error if not found
+   */
+  private async getUtxoOrThrow(
+    client: SigningClient,
+    outRefString: string,
+    utxoType: string,
+  ): Promise<UTxO.UTxO> {
+    const outRef = toEvoOutRef(outRefString);
+    if (!outRef) {
+      throw new Error(`Invalid ${utxoType} output reference: ${outRefString}`);
+    }
+    const utxos = await client.getUtxosByOutRef([outRef]);
+    if (!utxos || utxos.length === 0) {
+      throw new Error(`${utxoType} ${outRefString} UTxO not found or spent.`);
+    }
+    return utxos[0];
+  };
 }
 
 export default DanogoClmm;
