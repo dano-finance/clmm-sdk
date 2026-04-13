@@ -22,7 +22,7 @@ export function calculateConcentratedPoolSwap(
   deltaAmount: bigint,
   rewardAmount: bigint = 0n,
   platformFeeRate: bigint
-): [bigint, bigint, bigint] {
+): [bigint, bigint] {
   // Constants
   const excludedADA: bigint = datum.tokenX === ADA_UNIT ? 3_000_000n + BigInt(datum.totalSwapFee) : 0n;
   const activeReserveX =
@@ -46,7 +46,7 @@ export function calculateConcentratedPoolSwap(
       liquidity[1] * BigInt(datum.sqrtLowerPriceDen)
     ) + activeReserveY;
   if (deltaAmount > 0n) {
-    const [amountOut, platformFee] = getAmountOutFromAmountIn(
+    return getAmountOutFromAmountIn(
       deltaAmount,
       xV,
       yV,
@@ -54,9 +54,8 @@ export function calculateConcentratedPoolSwap(
       BigInt(datum.lpFeeRate),
       platformFeeRate
     );
-    return [deltaAmount, amountOut, platformFee];
   } else {
-    const [amountIn, platformFee] = getAmountInFromAmountOut(
+    return getAmountOutFromAmountIn(
       -deltaAmount,
       yV,
       xV,
@@ -64,7 +63,6 @@ export function calculateConcentratedPoolSwap(
       BigInt(datum.lpFeeRate),
       platformFeeRate
     );
-    return [amountIn, -deltaAmount, platformFee];
   }
 }
 
@@ -99,37 +97,6 @@ const getAmountOutFromAmountIn = (
 
   // return tuple: [expectedTokenOut, fee]
   return [expectedOut, platformFee];
-};
-
-/** @internal */
-const getAmountInFromAmountOut = (
-  amountOut: bigint,
-  tokenInVirtual: bigint,
-  tokenOutVirtual: bigint,
-  tokenOutReal: bigint,
-  lpFeeRate: bigint,
-  platformFeeRate: bigint
-): [bigint, bigint] => {
-  const BASE = 10_000n;
-
-  // safety check
-  if (amountOut > tokenOutReal) {
-    console.log("Pool out exceeded: amountOut =", amountOut, "tokenOutReal =", tokenOutReal);
-    throw new Error("pool out exceeded");
-  }
-
-  const offFee = BASE - lpFeeRate;
-
-  // main math
-  const numerator = tokenInVirtual * amountOut * BASE;
-  const denominator = offFee * (tokenOutVirtual - amountOut);
-  const expectedIn = ceilDiv(numerator, denominator);
-
-  // fee calculations
-  const lpFee = (expectedIn * lpFeeRate) / BASE;
-  const platformFee = (lpFee * BigInt(platformFeeRate)) / 10_000n;
-
-  return [expectedIn, platformFee];
 };
 
 /** @internal */
@@ -202,8 +169,8 @@ export function calculateMultiPoolSwap(
   }>,
   deltaAmounts: bigint[],
   platformFeeRate: bigint
-): Array<{ poolIndex: number; tokenIn: string; inputAmount: bigint; outputAmount: bigint; platformFee: bigint }> {
-  const results: Array<{ poolIndex: number; tokenIn: string; inputAmount: bigint; outputAmount: bigint; platformFee: bigint }> = [];
+): Array<{ poolIndex: number; deltaAmount: bigint; outputAmount: bigint; platformFee: bigint }> {
+  const results: Array<{ poolIndex: number; deltaAmount: bigint; outputAmount: bigint; platformFee: bigint }> = [];
 
   for (let i = 0; i < pools.length; i++) {
     const pool = pools[i];
@@ -211,7 +178,7 @@ export function calculateMultiPoolSwap(
 
     if (deltaAmount === 0n) continue;
 
-    const [inputAmount, outputAmount, platformFee] = calculateConcentratedPoolSwap(
+    const [outputAmount, platformFee] = calculateConcentratedPoolSwap(
       pool.tokenAAmount,
       pool.tokenBAmount,
       pool.datum,
@@ -222,8 +189,7 @@ export function calculateMultiPoolSwap(
 
     results.push({
       poolIndex: i,
-      tokenIn: deltaAmount > 0n ? pool.datum.tokenX : pool.datum.tokenY,
-      inputAmount,
+      deltaAmount,
       outputAmount,
       platformFee
     });

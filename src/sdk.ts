@@ -364,7 +364,7 @@ class DanogoClmm {
       const swapResult = swapResults.find(r => r.poolIndex === i);
       if (!swapResult) continue;
 
-      const tokenInIsX = swapResult.tokenIn == pool.datum.tokenX;
+      const deltaAmount = swapResult.deltaAmount;
       const platformFee = swapResult.platformFee;
 
       // Transform pool datum
@@ -372,10 +372,10 @@ class DanogoClmm {
         ...pool.datum,
         platformFeeX:
           BigInt(pool.datum.platformFeeX) +
-          (tokenInIsX ? platformFee : 0n),
+          (deltaAmount > 0 ? platformFee : 0n),
         platformFeeY:
           BigInt(pool.datum.platformFeeY) +
-          (!tokenInIsX ? platformFee : 0n),
+          (deltaAmount < 0 ? platformFee : 0n),
         lastWithdrawEpoch: currentEpoch,
         totalSwapFee:
           BigInt(pool.datum.totalSwapFee) + BigInt(protocolConfigDatum.swapFee),
@@ -383,9 +383,9 @@ class DanogoClmm {
 
       // Calculate output assets
       const deltaAssets = this.buildDeltaAssets(
-        tokenInIsX ? pool.tokenA : pool.tokenB,
-        tokenInIsX ? pool.tokenB : pool.tokenA,
-        swapResult.inputAmount,
+        deltaAmount > 0 ? pool.tokenA : pool.tokenB,
+        deltaAmount > 0 ? pool.tokenB : pool.tokenA,
+        deltaAmount,
         swapResult.outputAmount,
         protocolConfigDatum.swapFee
       );
